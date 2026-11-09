@@ -54,6 +54,8 @@ pub struct Slot {
     pub stack: usize,
     /// 0 = área dos fixados, 1 = apps abertos/Downloads/Lixeira, 2 = bandeja/relógio
     pub zone: u8,
+    /// faz parte do grupo de apps (fixados + abertos juntos)
+    pub in_block: bool,
 }
 
 impl Slot {
@@ -76,6 +78,7 @@ impl Slot {
             widget: 0,
             stack: 1,
             zone: 0,
+            in_block: false,
         }
     }
     pub fn is_app(&self) -> bool {
@@ -392,6 +395,11 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
     }
     let mut zone1: Vec<Slot> = vec![];
     let mut zone2: Vec<Slot> = vec![];
+    // modo livre: fixados, abertos e espaçadores formam um grupo só
+    let mixed = cfg.general.mixed_apps;
+    let mut block: Vec<Slot> = vec![];
+    let mut block_pos: Option<usize> = None;
+    let mut spacer_n = 0;
     for (i, it) in ws.items.iter().enumerate() {
         match it {
             DockItem::Start => {
@@ -415,7 +423,15 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
                         s.flashing |= w.flashing;
                     }
                 }
-                slots.push(s);
+                if mixed {
+                    if block_pos.is_none() {
+                        block_pos = Some(slots.len());
+                    }
+                    s.in_block = true;
+                    block.push(s);
+                } else {
+                    slots.push(s);
+                }
             }
             DockItem::Widgets { ids, cur, zone } => {
                 let ids: Vec<u32> = ids.iter().copied().filter(|id| widgets.contains_key(id)).collect();
@@ -443,7 +459,14 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
                 let mut s = Slot::new(SlotKind::Spacer, if *large { 1.0 } else { 0.5 });
                 s.item = Some(i);
                 s.mag = false;
-                slots.push(s);
+                s.key = format!("spacer:{}", spacer_n);
+                spacer_n += 1;
+                if mixed && block_pos.is_some() {
+                    s.in_block = true;
+                    block.push(s);
+                } else {
+                    slots.push(s);
+                }
             }
             DockItem::Folder { path, .. } => {
                 let mut s = Slot::new(SlotKind::Folder, 1.0);
@@ -456,7 +479,7 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
         }
     }
     // abertos que não estão fixados
-    let idx_r = slots.len();
+    let mut idx_r = slots.len();
     if cfg.general.show_running {
         let mut groups: Vec<Slot> = vec![];
         for (k, w) in running.iter().enumerate() {
@@ -478,12 +501,32 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
             s.flashing = w.flashing;
             groups.push(s);
         }
-        if !groups.is_empty() {
+        if mixed {
+            for mut g in groups {
+                g.in_block = true;
+                block.push(g);
+            }
+        } else if !groups.is_empty() {
             let mut sep = Slot::new(SlotKind::Sep, 0.3);
             sep.mag = false;
             slots.push(sep);
             slots.extend(groups);
         }
+    }
+    if mixed {
+        // ordem escolhida pelo usuário; os novos entram no fim (como na barra de tarefas)
+        let order = &ws.app_order;
+        let mut keyed: Vec<(usize, usize, Slot)> = block
+            .into_iter()
+            .enumerate()
+            .map(|(n, s)| (order.iter().position(|k| *k == s.key).unwrap_or(usize::MAX), n, s))
+            .collect();
+        keyed.sort_by_key(|x| (x.0, x.1));
+        let pos = block_pos.unwrap_or(slots.len()).min(slots.len());
+        let tail_items: Vec<Slot> = slots.split_off(pos);
+        slots.extend(keyed.into_iter().map(|x| x.2));
+        slots.extend(tail_items);
+        idx_r = slots.len();
     }
     // widgets colocados depois dos apps abertos
     if !zone1.is_empty() {
@@ -997,18 +1040,26 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                         c.shadow(r.inset(r.h * 0.06), r.h * 0.2, 5.0 * g.sc, 4.0 * g.sc, Color(0.04, 0.05, 0.12, 0.2));
                         wd.draw(&tile, ctx_sh);
                         if sl.stack > 1 {
-                            // pontinhos da pilha ao lado
+                            // pontinhos da pilha
                             let cur = match cfg.workspaces.get(cfg.ws_index(cur_ws).unwrap_or(0)).and_then(|w| sl.item.and_then(|i| w.items.get(i))) {
                                 Some(DockItem::Widgets { cur, .. }) => *cur,
                                 _ => 0,
                             };
+                            // embaixo da pilha, na linha dos indicadores de app aberto
+                            let off = g.pad_bottom * 0.45 + g.margin;
+                            let (cx, cy) = match pos {
+                                DockPos::Bottom => (r.cx(), bar.b() - off + g.margin * 0.4),
+                                DockPos::Top => (r.cx(), bar.y + off - g.margin * 0.4),
+                                DockPos::Left => (bar.x + off - g.margin * 0.4, r.cy()),
+                                DockPos::Right => (bar.r() - off + g.margin * 0.4, r.cy()),
+                            };
+                            let dot = (g.s * 0.035).max(1.6 * g.sc);
+                            let step = dot * 3.2;
+                            let n = sl.stack as f32;
                             for k in 0..sl.stack {
-                                let (x, y) = if vertical {
-                                    (r.x + r.w * (k as f32 + 0.5) / sl.stack as f32, r.b() + 3.0 * g.sc)
-                                } else {
-                                    (r.r() + 3.5 * g.sc, r.y + r.h * (k as f32 + 0.5) / sl.stack as f32)
-                                };
-                                c.fill_circle(x, y, 1.6 * g.sc, if k == cur { th.glyph } else { th.glyph.a(0.3) });
+                                let o = (k as f32 - (n - 1.0) / 2.0) * step;
+                                let (x, y) = if vertical { (cx, cy + o) } else { (cx + o, cy) };
+                                c.fill_circle(x, y, if k == cur { dot * 1.15 } else { dot }, if k == cur { th.glyph } else { th.glyph.a(0.35) });
                             }
                         }
                     }

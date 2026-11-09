@@ -36,11 +36,13 @@ pub struct Workspace {
     pub name: String,
     pub color: u32,
     pub items: Vec<DockItem>,
+    /// ordem livre do grupo de apps (chaves de fixados, abertos e espaçadores)
+    pub app_order: Vec<String>,
 }
 
 impl Default for Workspace {
     fn default() -> Self {
-        Workspace { id: 1, name: "Trabalho".into(), color: 0, items: vec![] }
+        Workspace { id: 1, name: "Trabalho".into(), color: 0, items: vec![], app_order: vec![] }
     }
 }
 
@@ -142,6 +144,8 @@ pub struct General {
     pub focus_hotkey: bool,
     pub follow_pointer: bool,
     pub hide_in_fullscreen: bool,
+    /// apps fixados e abertos juntos, com ordem livre
+    pub mixed_apps: bool,
 }
 
 impl Default for General {
@@ -171,6 +175,7 @@ impl Default for General {
             focus_hotkey: true,
             follow_pointer: true,
             hide_in_fullscreen: true,
+            mixed_apps: true,
         }
     }
 }
@@ -223,6 +228,8 @@ pub struct Config {
     pub claude_prev_statusline: String,
     /// Apps que nunca aparecem como abertos (exe ou AppUserModelID, minúsculo)
     pub hidden_apps: Vec<String>,
+    /// Agendas ICS do app inteiro
+    pub calendars: Vec<String>,
     pub hidden_defaults: bool,
 }
 
@@ -292,7 +299,7 @@ impl Config {
                     items.push(DockItem::Widgets { ids: vec![*id], cur: 0, zone: 0 });
                 }
             }
-            Workspace { id, name: name.into(), color, items }
+            Workspace { id, name: name.into(), color, items, app_order: vec![] }
         };
         c.workspaces = vec![mk(1, "Trabalho", 0, true), mk(2, "Pessoal", 3, true), mk(3, "Foco", 4, false)];
         c

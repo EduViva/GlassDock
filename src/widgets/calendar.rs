@@ -1,5 +1,6 @@
-// Calendário: a data no ícone, o mês no painel e, se você colar o endereço
-// ICS da sua agenda (Google, Outlook, iCloud), os próximos compromissos.
+// Calendário: a data no ícone, o mês no painel e os próximos compromissos
+// das agendas ICS (Google, Outlook, iCloud). As agendas valem para o app
+// inteiro: todos os widgets de calendário usam a mesma lista.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::mpsc::{channel, Receiver};
@@ -12,8 +13,10 @@ use crate::ui::*;
 struct Cfg {
     lookahead: u32,
     all_day: bool,
+    /// legado: agendas por widget (migradas para a lista do app)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     urls: Vec<String>,
-    /// hora ao lado do bloco da data (relógio + calendário num tile só)
+    /// legado: "hora ao lado da data" virou o estilo Data + hora
     show_time: bool,
     hours: u32,
 }
@@ -35,29 +38,55 @@ pub struct Event {
 
 const CAL_COLORS: [u32; 5] = [0xFF453A, 0x0A84FF, 0x30D158, 0xFF9F0A, 0xBF5AF2];
 
-pub struct Calendar {
-    c: Cfg,
-    events: Vec<Event>,
+// ---------------------------------------------------------------------------
+// Agendas do app (uma busca só, compartilhada)
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+pub struct IcsStore {
+    pub urls: Vec<String>,
+    pub events: Vec<Event>,
     rx: Option<Receiver<Vec<Event>>>,
     last_fetch: u64,
-    month_off: i32,
-    new_url: String,
-    error: bool,
+    pub error: bool,
+    /// a lista mudou: o app salva na configuração
+    pub changed: bool,
 }
 
-impl Calendar {
-    pub fn load(v: &Value) -> Calendar {
-        let mut c = Calendar { c: jget(v), events: vec![], rx: None, last_fetch: 0, month_off: 0, new_url: String::new(), error: false };
-        c.fetch();
-        c
+impl IcsStore {
+    pub fn set_urls(&mut self, urls: Vec<String>) {
+        self.urls = urls;
+        self.events.retain(|_| false);
+        self.changed = true;
+        self.refresh_now();
     }
 
-    fn fetch(&mut self) {
-        if self.c.urls.is_empty() || self.rx.is_some() {
+    pub fn refresh_now(&mut self) {
+        self.rx = None;
+        self.last_fetch = 0;
+        self.maybe_fetch();
+    }
+
+    /// Busca de novo a cada 15 minutos (só se houver agendas).
+    pub fn maybe_fetch(&mut self) {
+        if std::env::var("GLASSDOCK_TEST_FAKE_EVENTS").is_ok() && self.events.is_empty() {
+            // só para inspeção visual sem internet
+            let now = unix_now();
+            let tomorrow10 = local_to_unix(&DateTime::from_local_secs(local_now().date_only().local_secs() + 86400 + 10 * 3600));
+            self.events = vec![
+                Event { start: now + 40 * 60, end: now + 100 * 60, all_day: false, title: "Daily Tokyo".into(), cal: 0 },
+                Event { start: tomorrow10, end: tomorrow10 + 3600, all_day: false, title: "Revisão do design".into(), cal: 1 },
+            ];
             return;
         }
-        self.last_fetch = tick_ms();
-        let urls = self.c.urls.clone();
+        if self.urls.is_empty() || self.rx.is_some() {
+            return;
+        }
+        if self.last_fetch != 0 && tick_ms().saturating_sub(self.last_fetch) < 15 * 60 * 1000 {
+            return;
+        }
+        self.last_fetch = tick_ms().max(1);
+        let urls = self.urls.clone();
         let (tx, rx) = channel();
         self.rx = Some(rx);
         std::thread::spawn(move || {
@@ -77,6 +106,103 @@ impl Calendar {
         });
     }
 
+    pub fn poll(&mut self) -> bool {
+        if let Some(rx) = &self.rx {
+            if let Ok(ev) = rx.try_recv() {
+                self.error = ev.is_empty() && !self.urls.is_empty();
+                self.events = ev;
+                self.rx = None;
+                return true;
+            }
+        }
+        false
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Widget
+// ---------------------------------------------------------------------------
+
+pub struct Calendar {
+    c: Cfg,
+    month_off: i32,
+    new_url: String,
+}
+
+/// Texto grande da hora do evento: relativo quando falta menos de 12 h.
+pub fn event_big(e: &Event) -> String {
+    let now = unix_now();
+    if e.start <= now {
+        return "agora".into();
+    }
+    let st = unix_to_local(e.start);
+    let today = local_now().days();
+    if e.all_day {
+        return day_label(st.days(), today, &st);
+    }
+    let d = e.start - now;
+    if d < 12 * 3600 {
+        let m = (d + 59) / 60;
+        if m < 60 {
+            return format!("em {} min", m);
+        }
+        return format!("em {}h{:02}", m / 60, m % 60);
+    }
+    format!("{:02}:{:02}", st.hour, st.minute)
+}
+
+/// Complemento pequeno: o dia (ou o horário quando a hora grande é relativa).
+pub fn event_small(e: &Event) -> String {
+    let now = unix_now();
+    let st = unix_to_local(e.start);
+    let today = local_now().days();
+    if e.start <= now {
+        let en = unix_to_local(e.end);
+        return if e.all_day { "hoje".into() } else { format!("até {:02}:{:02}", en.hour, en.minute) };
+    }
+    if e.all_day {
+        return "dia todo".into();
+    }
+    if e.start - now < 12 * 3600 {
+        let dl = day_label(st.days(), today, &st);
+        return if dl == "hoje" { format!("às {:02}:{:02}", st.hour, st.minute) } else { format!("{} {:02}:{:02}", dl, st.hour, st.minute) };
+    }
+    day_label(st.days(), today, &st)
+}
+
+fn day_label(day: i64, today: i64, st: &DateTime) -> String {
+    if day == today {
+        "hoje".into()
+    } else if day == today + 1 {
+        "amanhã".into()
+    } else {
+        format!("{} {}", DIAS_CURTO[st.dow as usize].to_lowercase(), st.day)
+    }
+}
+
+fn when_text(e: &Event) -> String {
+    let big = event_big(e);
+    let small = event_small(e);
+    if big.starts_with("em ") || big == "agora" {
+        format!("{} · {}", big, small)
+    } else if e.all_day {
+        format!("{} · dia todo", big)
+    } else {
+        format!("{} {}", small, big)
+    }
+}
+
+impl Calendar {
+    pub fn load(v: &Value) -> Calendar {
+        Calendar { c: jget(v), month_off: 0, new_url: String::new() }
+    }
+
+    /// Agendas que estavam salvas neste widget (versões antigas).
+    pub fn legacy_urls(v: &Value) -> Vec<String> {
+        let c: Cfg = jget(v);
+        c.urls
+    }
+
     fn horizon(&self) -> i64 {
         match self.c.lookahead {
             0 => {
@@ -89,10 +215,10 @@ impl Calendar {
         }
     }
 
-    fn upcoming(&self) -> Vec<&Event> {
+    fn upcoming(&self, sh: &Shared) -> Vec<Event> {
         let now = unix_now();
         let h = self.horizon();
-        self.events.iter().filter(|e| e.end > now && e.start < h && (self.c.all_day || !e.all_day)).collect()
+        sh.ics.events.iter().filter(|e| e.end > now && e.start < h && (self.c.all_day || !e.all_day)).cloned().collect()
     }
 
     fn date_block(&self, t: &Tile, r: Rect) {
@@ -104,31 +230,46 @@ impl Calendar {
         let num = Rect::new(r.x, r.y + r.h * 0.28, r.w, r.h * 0.66);
         t.c.display(&n.day.to_string(), num, r.h * 0.52, W_NORMAL, Color::rgba(28, 28, 30, 1.0), Align::Center);
     }
-}
 
-fn when_text(e: &Event) -> String {
-    let now = unix_now();
-    if e.start <= now {
-        return "agora".into();
-    }
-    let d = e.start - now;
-    if !e.all_day && d < 3600 {
-        return format!("em {} min", (d + 59) / 60);
-    }
-    let st = unix_to_local(e.start);
-    let today = local_now().days();
-    let day = st.days();
-    let hm = if e.all_day { "dia todo".to_string() } else { format!("{:02}:{:02}", st.hour, st.minute) };
-    if day == today {
-        if e.all_day {
-            "hoje".into()
+    fn clock_text(&self) -> String {
+        let (tm, suf) = crate::widgets::clock::fmt_time(&local_now(), self.c.hours, false);
+        if suf.is_empty() {
+            tm
         } else {
-            format!("hoje {}", hm)
+            format!("{} {}", tm, suf)
         }
-    } else if day == today + 1 {
-        format!("amanhã {}", hm)
-    } else {
-        format!("{} {} · {}", DIAS_CURTO[st.dow as usize].to_lowercase(), st.day, hm)
+    }
+
+    /// Próximo evento: hora grande em cima, título embaixo.
+    fn draw_event(&self, t: &Tile, area: Rect, ev: Option<&Event>, empty_msg: &str) {
+        let Some(e) = ev else {
+            let n = local_now();
+            t.fit_text(empty_msg, Rect::new(area.x, area.y, area.w, area.h * 0.55), t.fs(0.16), W_SEMIBOLD, WHITE.a(0.9), Align::Left);
+            t.fit_text(&format!("{} de {}", n.day, MESES[(n.month - 1) as usize]), Rect::new(area.x, area.y + area.h * 0.52, area.w, area.h * 0.4), t.fs(0.13), W_NORMAL, WHITE.a(0.6), Align::Left);
+            return;
+        };
+        let col = Color::hex(CAL_COLORS[e.cal % CAL_COLORS.len()]);
+        t.c.fill_rrect(Rect::new(area.x, area.y + area.h * 0.1, t.s * 0.045, area.h * 0.8), t.s * 0.0225, col);
+        let tr = Rect::new(area.x + t.s * 0.11, area.y, area.w - t.s * 0.11, area.h);
+        let big = event_big(e);
+        let small = event_small(e);
+        // linha 1: hora grande + complemento ao lado
+        let big_r = Rect::new(tr.x, tr.y, tr.w, tr.h * 0.6);
+        let mut size = t.fs(0.3);
+        let (bw, _) = t.c.g.measure_fam(&big, size, W_SEMIBOLD, 2);
+        if bw > big_r.w {
+            size *= (big_r.w / bw).max(0.55);
+        }
+        let (bw, _) = t.c.g.measure_fam(&big, size, W_SEMIBOLD, 2);
+        t.c.display(&big, big_r, size, W_SEMIBOLD, WHITE, Align::Left);
+        let rest_w = big_r.w - bw - t.s * 0.08;
+        let small_on_title = rest_w < t.s * 0.5;
+        if !small_on_title {
+            t.fit_text(&small, Rect::new(big_r.x + bw + t.s * 0.08, big_r.y + big_r.h * 0.12, rest_w, big_r.h), t.fs(0.12), W_MEDIUM, col.mix(WHITE, 0.5), Align::Left);
+        }
+        // linha 2: título
+        let title = if small_on_title { format!("{} · {}", e.title, small) } else { e.title.clone() };
+        t.fit_text(&title, Rect::new(tr.x, tr.y + tr.h * 0.56, tr.w, tr.h * 0.4), t.fs(0.125), W_MEDIUM, WHITE.a(0.72), Align::Left);
     }
 }
 
@@ -137,30 +278,21 @@ impl Widget for Calendar {
         jput(&self.c)
     }
     fn styles(&self) -> &'static [&'static str] {
-        &["Próximo evento", "Data + próximo", "Data + agenda", "Data"]
+        &["Próximo evento", "Data + próximo", "Data + agenda", "Data", "Data + hora", "Hora + data + próximo"]
     }
     fn interval(&self, _sh: &Shared) -> Option<u32> {
         Some(60000)
     }
-    fn tick(&mut self, _sh: &mut Shared) -> bool {
-        if !self.c.urls.is_empty() && tick_ms().saturating_sub(self.last_fetch) > 15 * 60 * 1000 {
-            self.fetch();
-        }
+    fn tick(&mut self, sh: &mut Shared) -> bool {
+        sh.ics.maybe_fetch();
         true
     }
-    fn poll(&mut self, _sh: &mut Shared) -> bool {
-        if let Some(rx) = &self.rx {
-            if let Ok(ev) = rx.try_recv() {
-                self.error = ev.is_empty() && !self.c.urls.is_empty();
-                self.events = ev;
-                self.rx = None;
-                return true;
-            }
+    fn draw(&mut self, t: &Tile, sh: &mut Shared) {
+        let mut style = if t.units < 2 { 3 } else { t.style };
+        if self.c.show_time && style != 5 && style != 3 {
+            style = 4;
         }
-        false
-    }
-    fn draw(&mut self, t: &Tile, _sh: &mut Shared) {
-        let style = if t.units < 2 { 3 } else { t.style };
+        let ev = self.upcoming(sh);
         if style == 3 {
             // ícone de calendário
             let r = t.r;
@@ -168,75 +300,71 @@ impl Widget for Calendar {
             let n = local_now();
             t.c.text(DIAS_CURTO[n.dow as usize], Rect::new(r.x, r.y + r.h * 0.07, r.w, r.h * 0.24), r.h * 0.17, W_SEMIBOLD, RED, Align::Center);
             t.c.display(&n.day.to_string(), Rect::new(r.x, r.y + r.h * 0.26, r.w, r.h * 0.66), r.h * 0.5, W_NORMAL, Color::rgba(28, 28, 30, 1.0), Align::Center);
-            if !self.upcoming().is_empty() {
+            if !ev.is_empty() {
                 t.c.fill_circle(r.cx(), r.b() - r.h * 0.09, r.h * 0.035, RED);
             }
             return;
         }
         t.card();
         let inner = t.inner();
-        let ev = self.upcoming();
-        let mut area = inner;
-        if style == 1 || style == 2 || (self.c.show_time && style == 0) {
-            let d = inner.h;
-            self.date_block(t, Rect::new(inner.x, inner.y, d, d));
-            area = Rect::new(inner.x + d + t.s * 0.14, inner.y, inner.w - d - t.s * 0.14, inner.h);
-        }
-        if self.c.show_time {
-            // hora em destaque e, embaixo, o próximo compromisso (ou a data)
-            let n = local_now();
-            let (tm, suf) = crate::widgets::clock::fmt_time(&n, self.c.hours, false);
-            let txt = if suf.is_empty() { tm } else { format!("{} {}", tm, suf) };
-            t.fit_display(&txt, Rect::new(area.x, area.y, area.w, area.h * 0.6), t.fs(0.32), W_SEMIBOLD, WHITE, Align::Left);
-            let sub_r = Rect::new(area.x, area.y + area.h * 0.58, area.w, area.h * 0.4);
-            match ev.first() {
-                Some(e) => {
+        let empty = if sh.ics.urls.is_empty() { "Sem agenda" } else { "Nada por agora" };
+        let d = inner.h;
+        match style {
+            4 => {
+                // Data + hora: só a hora, bem grande, ao lado do bloco da data
+                self.date_block(t, Rect::new(inner.x, inner.y, d, d));
+                let area = Rect::new(inner.x + d + t.s * 0.12, inner.y, inner.w - d - t.s * 0.12, inner.h);
+                t.fit_display(&self.clock_text(), area, t.fs(0.46), W_SEMIBOLD, WHITE, Align::Center);
+            }
+            5 => {
+                // Hora | data | próximo evento
+                let clock = self.clock_text();
+                let mut size = t.fs(0.4);
+                let (cw, _) = t.c.g.measure_fam(&clock, size, W_SEMIBOLD, 2);
+                let max_cw = inner.w * 0.32;
+                if cw > max_cw {
+                    size *= max_cw / cw;
+                }
+                let (cw, _) = t.c.g.measure_fam(&clock, size, W_SEMIBOLD, 2);
+                t.c.display(&clock, Rect::new(inner.x, inner.y, cw + 2.0, inner.h), size, W_SEMIBOLD, WHITE, Align::Left);
+                let bx = inner.x + cw + t.s * 0.14;
+                self.date_block(t, Rect::new(bx, inner.y, d, d));
+                let area = Rect::new(bx + d + t.s * 0.14, inner.y, inner.r() - bx - d - t.s * 0.14, inner.h);
+                self.draw_event(t, area, ev.first(), empty);
+            }
+            2 => {
+                self.date_block(t, Rect::new(inner.x, inner.y, d, d));
+                let area = Rect::new(inner.x + d + t.s * 0.14, inner.y, inner.w - d - t.s * 0.14, inner.h);
+                if ev.is_empty() {
+                    self.draw_event(t, area, None, empty);
+                    return;
+                }
+                let n = ev.len().min(if inner.h > t.s * 0.7 { 3 } else { 2 });
+                let lh = area.h / n as f32;
+                for (i, e) in ev.iter().take(n).enumerate() {
+                    let r = Rect::new(area.x, area.y + lh * i as f32, area.w, lh);
                     let col = Color::hex(CAL_COLORS[e.cal % CAL_COLORS.len()]);
-                    let dot = t.s * 0.035;
-                    t.c.fill_circle(sub_r.x + dot, sub_r.cy(), dot, col);
-                    let tr = Rect::new(sub_r.x + dot * 3.0, sub_r.y, sub_r.w - dot * 3.0, sub_r.h);
-                    t.fit_text(&format!("{} · {}", e.title, when_text(e)), tr, t.fs(0.12), W_MEDIUM, WHITE.a(0.75), Align::Left);
-                }
-                None => {
-                    t.fit_text(&format!("{} de {}", n.day, MESES[(n.month - 1) as usize]), sub_r, t.fs(0.12), W_MEDIUM, WHITE.a(0.65), Align::Left);
+                    t.c.fill_rrect(Rect::new(r.x, r.y + lh * 0.18, t.s * 0.04, lh * 0.64), t.s * 0.02, col);
+                    let big = event_big(e);
+                    let (bw, _) = t.c.g.measure(&big, t.fs(0.135), W_BOLD);
+                    let tr = Rect::new(r.x + t.s * 0.09, r.y, r.w - t.s * 0.09, r.h);
+                    t.c.text(&big, Rect::new(tr.x, tr.y, bw + 2.0, tr.h), t.fs(0.135), W_BOLD, WHITE, Align::Left);
+                    t.fit_text(&e.title, Rect::new(tr.x + bw + t.s * 0.07, tr.y, tr.w - bw - t.s * 0.07, tr.h), t.fs(0.125), W_NORMAL, WHITE.a(0.72), Align::Left);
                 }
             }
-            return;
-        }
-        if ev.is_empty() {
-            let msg = if self.c.urls.is_empty() { "Sem agenda" } else { "Nada por agora" };
-            t.fit_text(msg, Rect::new(area.x, area.y, area.w, area.h * 0.5), t.fs(0.16), W_SEMIBOLD, WHITE, Align::Left);
-            let n = local_now();
-            t.fit_text(&format!("{} de {}", n.day, MESES[(n.month - 1) as usize]), Rect::new(area.x, area.y + area.h * 0.48, area.w, area.h * 0.4), t.fs(0.13), W_NORMAL, WHITE.a(0.6), Align::Left);
-            return;
-        }
-        if style == 2 {
-            let n = ev.len().min(if inner.h > t.s * 0.7 { 3 } else { 2 });
-            let lh = area.h / n as f32;
-            for (i, e) in ev.iter().take(n).enumerate() {
-                let r = Rect::new(area.x, area.y + lh * i as f32, area.w, lh);
-                let col = Color::hex(CAL_COLORS[e.cal % CAL_COLORS.len()]);
-                t.c.fill_rrect(Rect::new(r.x, r.y + lh * 0.18, t.s * 0.04, lh * 0.64), t.s * 0.02, col);
-                let tr = Rect::new(r.x + t.s * 0.09, r.y, r.w - t.s * 0.09, r.h);
-                let when = when_text(e);
-                let (ww, _) = t.c.g.measure(&when, t.fs(0.12), W_NORMAL);
-                t.fit_text(&e.title, Rect::new(tr.x, tr.y, tr.w - ww - t.s * 0.06, tr.h), t.fs(0.13), W_MEDIUM, WHITE, Align::Left);
-                t.c.text(&when, tr, t.fs(0.12), W_NORMAL, WHITE.a(0.6), Align::Right);
+            1 => {
+                self.date_block(t, Rect::new(inner.x, inner.y, d, d));
+                let area = Rect::new(inner.x + d + t.s * 0.14, inner.y, inner.w - d - t.s * 0.14, inner.h);
+                self.draw_event(t, area, ev.first(), empty);
             }
-            return;
+            _ => self.draw_event(t, inner, ev.first(), empty),
         }
-        let e = ev[0];
-        let col = Color::hex(CAL_COLORS[e.cal % CAL_COLORS.len()]);
-        t.c.fill_rrect(Rect::new(area.x, area.y + area.h * 0.12, t.s * 0.05, area.h * 0.76), t.s * 0.025, col);
-        let tr = Rect::new(area.x + t.s * 0.12, area.y, area.w - t.s * 0.12, area.h);
-        t.fit_text(&e.title, Rect::new(tr.x, tr.y, tr.w, tr.h * 0.55), t.fs(0.165), W_SEMIBOLD, WHITE, Align::Left);
-        t.fit_text(&when_text(e), Rect::new(tr.x, tr.y + tr.h * 0.5, tr.w, tr.h * 0.42), t.fs(0.135), W_NORMAL, col.mix(WHITE, 0.45), Align::Left);
     }
-    fn panel_size(&self, _sh: &Shared) -> (f32, f32) {
-        let n = self.upcoming().len().min(6) as f32;
+    fn panel_size(&self, sh: &Shared) -> (f32, f32) {
+        let n = self.upcoming(sh).len().min(6) as f32;
         (320.0, 300.0 + if n > 0.0 { 30.0 + n * 40.0 } else { 40.0 })
     }
-    fn panel(&mut self, ui: &mut Ui, _sh: &mut Shared) {
+    fn panel(&mut self, ui: &mut Ui, sh: &mut Shared) {
         let n = local_now();
         let mut y = n.year;
         let mut m = n.month as i32 + self.month_off;
@@ -273,7 +401,7 @@ impl Widget for Calendar {
         let today = n.days();
         let grid = ui.row(6.0 * 36.0);
         let ch = grid.h / 6.0;
-        let ev_days: std::collections::HashSet<i64> = self.events.iter().map(|e| unix_to_local(e.start).days()).collect();
+        let ev_days: std::collections::HashSet<i64> = sh.ics.events.iter().map(|e| unix_to_local(e.start).days()).collect();
         for d in 0..dim {
             let cell = start_dow + d;
             let (row, col) = (cell / 7, cell % 7);
@@ -290,11 +418,11 @@ impl Widget for Calendar {
             }
         }
         ui.separator();
-        let ev: Vec<Event> = self.upcoming().into_iter().cloned().collect();
+        let ev: Vec<Event> = self.upcoming(sh);
         if ev.is_empty() {
-            if self.c.urls.is_empty() {
-                ui.note("Para ver seus compromissos, cole o endereço ICS da sua agenda em Editar widget (botão direito).");
-            } else if self.error {
+            if sh.ics.urls.is_empty() {
+                ui.note("Para ver seus compromissos, cole o endereço ICS da sua agenda em Editar widget (botão direito). Ele vale para todos os calendários do app.");
+            } else if sh.ics.error {
                 ui.note("Não consegui ler a agenda. Confira o endereço ICS.");
             } else {
                 ui.note("Nenhum compromisso nos próximos dias.");
@@ -321,16 +449,14 @@ impl Widget for Calendar {
         if ui.row_toggle(id("ad"), "Eventos de dia inteiro", &mut self.c.all_day) {
             sh.save = true;
         }
-        if ui.row_toggle(id("st"), "Mostrar a hora ao lado da data", &mut self.c.show_time) {
+        if ui.labeled_segmented(id("hr"), "Horas", &["Sistema", "24 h", "12 h"], &mut self.c.hours) {
             sh.save = true;
         }
-        if self.c.show_time && ui.labeled_segmented(id("hr"), "Horas", &["Sistema", "24 h", "12 h"], &mut self.c.hours) {
-            sh.save = true;
-        }
-        ui.caption("AGENDAS (ENDEREÇO ICS)");
-        ui.note("No Google Agenda: Configurações › sua agenda › Endereço secreto no formato iCal. No Outlook: Calendário › Compartilhar › Publicar › ICS.");
+        ui.caption("AGENDAS DO APP (ENDEREÇO ICS)");
+        ui.note("Valem para todos os widgets de calendário e para o calendário do relógio. No Google Agenda: Configurações › sua agenda › Endereço secreto no formato iCal. No Outlook: Calendário › Compartilhar › Publicar › ICS.");
+        let mut urls = sh.ics.urls.clone();
         let mut remove = None;
-        for (i, u) in self.c.urls.clone().iter().enumerate() {
+        for (i, u) in urls.iter().enumerate() {
             let r = ui.row(30.0);
             let col = Color::hex(CAL_COLORS[i % CAL_COLORS.len()]);
             ui.c.fill_circle(r.x + 6.0 * ui.s, r.cy(), 5.0 * ui.s, col);
@@ -340,26 +466,22 @@ impl Widget for Calendar {
             }
         }
         if let Some(i) = remove {
-            self.c.urls.remove(i);
-            self.events.retain(|e| e.cal != i);
-            sh.save = true;
+            urls.remove(i);
+            sh.ics.set_urls(urls.clone());
         }
         let r = ui.row(34.0);
         let bw = 84.0 * ui.s;
         let res = ui.text_input(id("nu"), Rect::new(r.x, r.y + 2.0, r.w - bw - 8.0, r.h - 4.0), &mut self.new_url, "https://…/basic.ics", false);
         let add = ui.button_k(id("add"), Rect::new(r.r() - bw, r.y + 2.0, bw, r.h - 4.0), "Adicionar", Btn::Primary);
         if (add || res.submitted) && self.new_url.trim().len() > 8 {
-            self.c.urls.push(self.new_url.trim().to_string());
+            urls.push(self.new_url.trim().to_string());
             self.new_url.clear();
-            sh.save = true;
-            self.rx = None;
-            self.fetch();
+            sh.ics.set_urls(urls);
         }
-        if !self.c.urls.is_empty() {
+        if !sh.ics.urls.is_empty() {
             let r = ui.row(34.0);
             if ui.button(id("ref"), Rect::new(r.x, r.y + 2.0, 140.0 * ui.s, r.h - 4.0), "Atualizar agora") {
-                self.rx = None;
-                self.fetch();
+                sh.ics.refresh_now();
             }
         }
     }

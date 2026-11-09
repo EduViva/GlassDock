@@ -19,7 +19,8 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Vidro com desfoque nativo do Windows, borda clara, brilho e sombra
 - Ampliação dos ícones estilo Mac (ou só escala, ou nada), nome do app ao passar o mouse
 - Ícones não quadrados ganham uma placa arredondada (dá para desligar)
-- Apps fixados, apps abertos (separados), indicador de aberto (ponto ou traço)
+- Apps fixados e abertos juntos, com ordem livre: arraste qualquer app (aberto ou fechado) para qualquer lugar do grupo; a ordem fica salva. Dá para voltar ao modo separado em Ajustes › Geral.
+- Indicador de aberto (ponto ou traço)
 - Animação de abertura: pulo, pulso ou tremor
 - Clique: abre o app; se já está na frente, minimiza; com várias janelas, alterna entre elas
 - Clique do meio: nova janela
@@ -50,7 +51,7 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Coleção de apps, Favoritos, Arquivos (Downloads ou outra pasta, com contagem de novos)
 - Relógio, Analógico, Relógio mundial (14 cidades)
 - Timer de foco, Pomodoro, Contagem regressiva, Progresso do tempo
-- Calendário em 4 estilos. Os compromissos vêm do endereço ICS da sua agenda (Google, Outlook, iCloud), com eventos recorrentes.
+- Calendário em 6 estilos (incluindo Data + hora e Hora + data + próximo). A hora do próximo compromisso aparece grande, relativa quando falta menos de 12 h. As agendas ICS (Google, Outlook, iCloud) valem para o app inteiro.
 - Lista de tarefas, Post-it
 - Tocando agora: Spotify, navegador, app Música ou qualquer player, com capa e controles
 - Bateria (3 estilos), Atividade de CPU e memória (3 estilos), Rede (2 estilos), Layout do teclado
@@ -58,7 +59,8 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Mascote: gato, cachorro, passarinho, dragão, dino, guerreira, guerreiro, Papai Noel e fantasminha. Ele anda por cima da dock conforme a CPU e você pode colocar comida.
 - Uso do Claude (limite de 5 h, semanal e tokens), Uso do Codex, Uso do OpenCode
 - Clima (Open-Meteo, sem chave): agora, condições e previsão de 5 dias
-- Pilhas: vários widgets no mesmo lugar, trocando com a roda do mouse
+- Pilhas: vários widgets no mesmo lugar, trocando com a roda do mouse (as bolinhas ficam embaixo)
+- Widgets podem ficar junto dos apps, depois dos apps abertos ou depois da bandeja
 
 ## Consumo de recursos
 

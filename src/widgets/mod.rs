@@ -128,6 +128,8 @@ pub struct Shared {
     pub drag_out: Option<Vec<String>>,
     /// pastas vigiadas / atalhos mudaram
     pub rewatch: bool,
+    /// agendas ICS compartilhadas por todos os calendários
+    pub ics: calendar::IcsStore,
 }
 
 impl Shared {
@@ -250,7 +252,8 @@ pub const CATALOG: &[CatalogEntry] = &[
     entry!("calendar", "Data + próximo evento", "A data de hoje e o próximo compromisso ao lado.", "Calendário", 3, 1, ""),
     entry!("calendar", "Data + agenda", "A data e a lista dos próximos compromissos.", "Calendário", 3, 2, ""),
     entry!("calendar", "Data", "Só a data de hoje. O clique mostra o mês e a agenda.", "Calendário", 1, 3, ""),
-    entry!("calendar", "Data + hora", "O calendário com a hora ao lado e o próximo compromisso embaixo: relógio e data num tile só.", "Calendário", 2, 1, r#"{"show_time":true}"#),
+    entry!("calendar", "Data + hora", "O calendário com a hora grande ao lado: relógio e data num tile só.", "Calendário", 2, 4, ""),
+    entry!("calendar", "Hora + data + próximo", "A hora à esquerda, a data e o próximo compromisso com o horário em destaque.", "Calendário", 4, 5, ""),
     entry!("tasks", "Lista de tarefas", "Anote, marque e limpe tarefas direto no painel.", "Notas e mídia", 2),
     entry!("note", "Post-it", "Um recado que fica na dock.", "Notas e mídia", 2),
     entry!("music", "Tocando agora", "O que está tocando, com capa e controles. Spotify, navegador ou qualquer player.", "Notas e mídia", 3),

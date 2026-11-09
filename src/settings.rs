@@ -199,6 +199,7 @@ fn page_general(app: &mut App, ui: &mut Ui) {
     }
     section(ui, "O QUE APARECE NA DOCK");
     ch_general |= ui.row_toggle(id("sr"), "Mostrar apps abertos", &mut g.show_running);
+    ch_general |= ui.row_toggle(id("mx"), "Apps fixados e abertos juntos (arraste para qualquer lugar)", &mut g.mixed_apps);
     ch_general |= ui.row_toggle(id("oc"), "Só apps do workspace atual", &mut g.only_current_ws);
     ch_general |= ui.row_toggle(id("wsel"), "Seletor de workspace (bolinhas)", &mut g.ws_selector);
     ch_general |= ui.row_toggle(id("dl"), "Mostrar Downloads", &mut g.show_downloads);
@@ -344,7 +345,7 @@ fn page_workspaces(app: &mut App, ui: &mut Ui, sel: &mut usize, app_search: &mut
         let id_new = app.cfg.workspaces.iter().map(|w| w.id).max().unwrap_or(0) + 1;
         let mut items = vec![DockItem::Start];
         items.extend(crate::icons::default_pins().into_iter().map(DockItem::App));
-        app.cfg.workspaces.push(Workspace { id: id_new, name: format!("Workspace {}", n + 1), color: (n % 6) as u32, items });
+        app.cfg.workspaces.push(Workspace { id: id_new, name: format!("Workspace {}", n + 1), color: (n % 6) as u32, items, app_order: vec![] });
         *sel = app.cfg.workspaces.len() - 1;
         app.after_ws_change();
         return;

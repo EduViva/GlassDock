@@ -130,7 +130,7 @@ pub struct Panel {
 pub enum Act {
     Activate(isize),
     NewWindow(PinnedApp),
-    Pin(PinnedApp),
+    Pin(PinnedApp, String),
     Unpin(usize),
     MoveTo(Vec<isize>, u32),
     Close(Vec<isize>),
@@ -337,7 +337,21 @@ impl App {
             popup: None,
             drag_out: None,
             rewatch: false,
+            ics: Default::default(),
         };
+        let mut cfg = cfg;
+        let mut sh = sh;
+        if cfg.calendars.is_empty() {
+            // versões antigas guardavam as agendas em cada widget
+            for w in cfg.widgets.iter().filter(|w| w.kind == "calendar") {
+                for u in widgets::calendar::Calendar::legacy_urls(&w.data) {
+                    if !cfg.calendars.contains(&u) {
+                        cfg.calendars.push(u);
+                    }
+                }
+            }
+        }
+        sh.ics.urls = cfg.calendars.clone();
         let mut widgets: BTreeMap<u32, Box<dyn Widget>> = BTreeMap::new();
         for wi in &cfg.widgets {
             widgets.insert(wi.id, widgets::make(&wi.kind, &wi.data));
@@ -409,6 +423,7 @@ impl App {
         self.register_hotkeys();
         self.rewatch();
         self.ensure_services();
+        self.sh.ics.maybe_fetch();
         unsafe {
             SetTimer(Some(self.main), T_SLOW, 5000, None);
             if self.cfg.general.autohide {
@@ -1092,7 +1107,7 @@ impl App {
                 Some(LRESULT(0))
             }
             WM_APP_POLL => {
-                let mut ch = false;
+                let mut ch = self.sh.ics.poll();
                 for (_, w) in self.widgets.iter_mut() {
                     ch |= w.poll(&mut self.sh);
                 }
@@ -1571,6 +1586,39 @@ impl App {
             }
             return;
         }
+        // modo livre: reordena dentro do grupo de apps (fixados e abertos)
+        if self.cfg.general.mixed_apps && sl.in_block {
+            let d = &self.docks[i];
+            let visible: Vec<String> = d.slots.iter().filter(|s| s.in_block).map(|s| s.key.clone()).collect();
+            let mut idx = 0;
+            for (k, s) in d.slots.iter().enumerate() {
+                if !s.in_block || k == si {
+                    continue;
+                }
+                let (a, _) = d.unmap(g, s.rect.cx(), s.rect.cy());
+                if a < u {
+                    idx += 1;
+                }
+            }
+            let vis_wo: Vec<String> = visible.iter().filter(|k| **k != sl.key).cloned().collect();
+            let mut full = self.cfg.workspaces[wsi].app_order.clone();
+            for k in &visible {
+                if !full.contains(k) {
+                    full.push(k.clone());
+                }
+            }
+            full.retain(|k| *k != sl.key);
+            let pos = if idx == 0 {
+                vis_wo.first().and_then(|f| full.iter().position(|k| k == f)).unwrap_or(0)
+            } else {
+                vis_wo.get(idx - 1).and_then(|p| full.iter().position(|k| k == p)).map(|p| p + 1).unwrap_or(full.len())
+            };
+            full.insert(pos.min(full.len()), sl.key.clone());
+            full.truncate(300);
+            self.cfg.workspaces[wsi].app_order = full;
+            self.mark_save();
+            return;
+        }
         // nova posição: o item mais próximo de onde foi solto. Widgets podem
         // ir para depois dos apps abertos (zona 1) ou da bandeja (zona 2).
         let d = &self.docks[i];
@@ -1854,7 +1902,7 @@ impl App {
                         if sl.kind == SlotKind::Pinned {
                             items.push(mi("Remover do Dock", Act::Unpin(sl.item.unwrap_or(0))));
                         } else {
-                            items.push(mi("Manter no Dock", Act::Pin(a.clone())));
+                            items.push(mi("Manter no Dock", Act::Pin(a.clone(), sl.key.clone())));
                         }
                     }
                     if !sl.wins.is_empty() && self.cfg.workspaces.len() > 1 {
@@ -2062,7 +2110,14 @@ impl App {
             Act::NewWindow(a) => {
                 winlist::launch(&a, true);
             }
-            Act::Pin(a) => {
+            Act::Pin(a, old_key) => {
+                // no modo livre, o app fixado fica onde já estava
+                let new_key = format!("pin:{}", a.launch.to_lowercase());
+                for k in self.cfg.workspaces[wsi].app_order.iter_mut() {
+                    if *k == old_key {
+                        *k = new_key.clone();
+                    }
+                }
                 let items = &mut self.cfg.workspaces[wsi].items;
                 let pos = items.iter().rposition(|x| matches!(x, DockItem::App(_) | DockItem::Start)).map(|p| p + 1).unwrap_or(items.len());
                 items.insert(pos, DockItem::App(a));
@@ -2600,6 +2655,12 @@ impl App {
     // -----------------------------------------------------------------------
 
     pub fn process_requests(&mut self) {
+        if self.sh.ics.changed {
+            self.sh.ics.changed = false;
+            self.cfg.calendars = self.sh.ics.urls.clone();
+            self.mark_save();
+            self.sh.redraw = true;
+        }
         if self.sh.save {
             self.sh.save = false;
             self.mark_save();

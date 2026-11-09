@@ -1,0 +1,22 @@
+#define RT_MANIFEST 24
+1 RT_MANIFEST "app.manifest"
+1 ICON "glassdock.ico"
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041604b0"
+    BEGIN
+      VALUE "FileDescription", "GlassDock"
+      VALUE "ProductName", "GlassDock"
+      VALUE "FileVersion", "1.0.0"
+      VALUE "ProductVersion", "1.0.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0416, 1200
+  END
+END

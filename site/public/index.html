@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>GlassDock · A dock de vidro para Windows</title>
+  <meta name="description" content="Tudo que você sempre quis na barra de tarefas do Windows. Tipo a dock do Mac, só que melhor: vidro de verdade, 26 widgets e 2 MB. R$ 8,90, pagamento único">
+  <meta name="theme-color" content="#08080c">
+  <meta property="og:title" content="GlassDock · Tipo a dock do Mac, só que melhor">
+  <meta property="og:description" content="Tudo que você sempre quis na barra de tarefas do Windows. 26 widgets, vidro de verdade, 2 MB. R$ 8,90 uma vez só">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="/assets/og.png">
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/dock.css">
+  <link rel="stylesheet" href="/assets/widgets.css">
+</head>
+<body id="topo">
+
+<header class="topbar glass">
+  <a class="brand" href="/"><img src="/assets/icon.svg" alt="">GlassDock</a>
+  <nav class="topnav">
+    <a class="link" href="#widgets">Widgets</a>
+    <a class="link" href="#personalize">Personalize</a>
+    <a class="link keep" href="/indique">Indique e ganhe</a>
+    <button class="btn btn-primary btn-sm" data-buy>Comprar <span class="price-tag">R$ 8,90</span></button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============================================================ HERO -->
+  <section class="hero">
+    <div class="wall"></div>
+    <div class="wrap hero-copy">
+      <div class="ref-pill glass" data-ref-pill hidden>
+        <span class="av" data-ref-initial>A</span>
+        <span><b data-ref-name>Alguém</b> te indicou o GlassDock</span>
+      </div>
+      <h1>Tudo que você sempre quis na barra de tarefas do Windows</h1>
+      <p class="sub">Tipo a dock do Mac, <em class="grad-text">só que melhor</em></p>
+      <div class="hero-cta">
+        <button class="btn btn-primary btn-lg" data-buy>Comprar por R$ 8,90</button>
+        <a class="btn btn-ghost btn-lg" href="#widgets">Ver os widgets</a>
+      </div>
+      <div class="hero-note">
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Pagamento único</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Windows 10 e 11</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>PIX ou cartão</span>
+      </div>
+    </div>
+    <div class="hero-stage" id="hero-dock" aria-label="Demonstração da dock, passe o mouse e clique nos ícones"></div>
+  </section>
+
+  <!-- ============================================================ NÚMEROS -->
+  <section class="wrap" style="margin-top:-10px">
+    <div class="stats reveal">
+      <div class="stat card"><div class="n">26</div><div class="l">widgets, em 40 estilos</div></div>
+      <div class="stat card"><div class="n">2 MB</div><div class="l">o app inteiro</div></div>
+      <div class="stat card"><div class="n">0%</div><div class="l">de CPU quando está parado</div></div>
+      <div class="stat card"><div class="n">9</div><div class="l">workspaces, cada um com a sua dock</div></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ WIDGETS -->
+  <section class="sec" id="widgets">
+    <div class="wrap">
+      <div class="wcount reveal">
+        <div class="big">26</div>
+        <div class="side">
+          <h2>widgets vivos dentro da dock</h2>
+          <p class="lead">Agenda, música, clima, processador, uso de IA, Pomodoro, um gato que anda por cima da barra. Clique em qualquer um e ele abre um painel completo</p>
+        </div>
+      </div>
+      <div class="chips reveal" id="wfilter" role="toolbar" aria-label="Filtrar widgets"></div>
+      <div class="wgrid" id="wgrid"></div>
+      <p class="dim reveal" style="margin-top:22px;font-size:15px">Quer dois widgets no mesmo espaço? Monte uma pilha e troque entre eles com a roda do mouse</p>
+    </div>
+  </section>
+
+  <!-- ============================================================ A DOCK -->
+  <section class="sec" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <h2>A barra de tarefas inteira, <span class="grad-text">refeita</span></h2>
+        <p class="lead">Tudo o que a barra do Windows faz continua lá, só que bonito e mais esperto</p>
+      </div>
+      <div class="bento">
+        <div class="card s4 reveal">
+          <div class="viz">
+            <div class="pv-row">
+              <div class="pv"><div class="pv-win"><i></i><i></i><i></i></div><span>Relatório final</span></div>
+              <div class="pv"><div class="pv-win dark"><i></i><i></i><i></i></div><span>Planilha de março</span></div>
+              <div class="pv hide-sm"><div class="pv-win"><i></i><i></i><i></i></div><span>Notas</span></div>
+            </div>
+          </div>
+          <h3>Prévias ao vivo das janelas</h3>
+          <p>Pare o mouse num app e veja as janelas dele. Fecha direto pela prévia, com o X ou o clique do meio</p>
+        </div>
+        <div class="card s2 reveal">
+          <div class="viz">
+            <div class="ws-demo">
+              <div><i style="background:#0A84FF"></i>Trabalho</div>
+              <div><i style="background:#30D158"></i>Casa</div>
+              <div><i style="background:#BF5AF2"></i>Estudos</div>
+            </div>
+          </div>
+          <h3>Workspaces</h3>
+          <p>Até 9 ambientes, cada um com seus apps, widgets e janelas. Troque com Ctrl+Alt+número</p>
+        </div>
+        <div class="card s2 reveal">
+          <div class="viz"><div class="tray-demo"></div></div>
+          <h3>Bandeja em linha</h3>
+          <p>Rede, volume, bateria e os ícones do Discord, OneDrive e companhia direto na dock</p>
+        </div>
+        <div class="card s2 reveal">
+          <div class="viz">
+            <svg viewBox="0 0 200 110" width="210" height="116" aria-hidden="true">
+              <rect x="6" y="10" width="104" height="66" rx="8" fill="#2a2a33" stroke="rgba(255,255,255,.18)"/>
+              <rect x="122" y="22" width="72" height="54" rx="7" fill="#2a2a33" stroke="rgba(255,255,255,.18)"/>
+              <rect x="30" y="62" width="56" height="9" rx="4.5" fill="rgba(255,255,255,.55)"/>
+              <rect x="138" y="62" width="40" height="8" rx="4" fill="rgba(255,255,255,.55)"/>
+              <path d="M52 86v10h-14M164 86v10h14" stroke="rgba(255,255,255,.25)" stroke-width="3" fill="none"/>
+            </svg>
+          </div>
+          <h3>Vários monitores</h3>
+          <p>Uma dock por monitor ou uma só que segue o ponteiro</p>
+        </div>
+        <div class="card s2 reveal">
+          <div class="viz">
+            <div class="drop-demo"><span class="f"></span><span class="arrow">→</span><span class="stack"><i></i><i></i><i></i></span></div>
+          </div>
+          <h3>Arraste e solte</h3>
+          <p>Solte um app para fixar, uma pasta para virar pilha ou um arquivo na Lixeira para apagar</p>
+        </div>
+        <div class="card s2 reveal">
+          <div class="viz"><div class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>D</kbd></div></div>
+          <h3>Atalhos de teclado</h3>
+          <p>Foco na dock, troca de workspace e conta-gotas sem tirar a mão do teclado</p>
+        </div>
+        <div class="card s2 reveal">
+          <div class="viz">
+            <svg viewBox="0 0 200 110" width="210" height="116" aria-hidden="true">
+              <rect x="20" y="8" width="160" height="94" rx="10" fill="#15151a" stroke="rgba(255,255,255,.18)"/>
+              <circle cx="100" cy="55" r="20" fill="rgba(255,255,255,.12)"/>
+              <path d="M94 45l16 10-16 10z" fill="#fff"/>
+              <rect x="60" y="86" width="80" height="6" rx="3" fill="rgba(255,255,255,.12)" stroke-dasharray="3 3" stroke="rgba(255,255,255,.35)"/>
+            </svg>
+          </div>
+          <h3>Some na tela cheia</h3>
+          <p>Esconde sozinha em jogos e vídeos. Também pode ocultar automaticamente ou deixar as janelas maximizadas acima dela</p>
+        </div>
+        <div class="card s2 reveal">
+          <div class="viz">
+            <svg viewBox="0 0 200 110" width="210" height="116" aria-hidden="true">
+              <rect x="10" y="70" width="180" height="26" rx="4" fill="#202027" stroke="rgba(255,255,255,.14)"/>
+              <g fill="rgba(255,255,255,.55)"><rect x="74" y="77" width="12" height="12" rx="2"/><rect x="94" y="77" width="12" height="12" rx="2"/><rect x="114" y="77" width="12" height="12" rx="2"/></g>
+              <path d="M70 46c10-20 50-22 62-2" fill="none" stroke="#30D158" stroke-width="4" stroke-linecap="round"/>
+              <path d="M124 34l9 10-13 3" fill="none" stroke="#30D158" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h3>Saiu, a barra volta</h3>
+          <p>Não instala nada e não pede administrador. Fechou o GlassDock, a barra do Windows volta como estava, até se o app cair</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ PERSONALIZE -->
+  <section class="sec" id="personalize">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <h2>Do seu jeito, <span class="grad-text">nos mínimos detalhes</span></h2>
+        <p class="lead">Mexa nos controles e veja a dock mudar. No app tem tudo isso e mais um pouco</p>
+      </div>
+      <div class="custom">
+        <div class="screen reveal" id="screen" data-pos="bottom">
+          <div class="win"><i></i><i></i><i></i></div>
+          <div class="win w2"><i></i><i></i><i></i></div>
+          <div class="dockslot" id="cfg-dock"></div>
+        </div>
+        <div class="panel glass reveal" id="cfg"></div>
+      </div>
+
+      <div class="combos card reveal" style="margin-top:18px">
+        <span class="n grad-text">15.552</span>
+        <span class="muted">combinações só de aparência, antes de escolher cores, tamanhos, widgets e a ordem de cada coisa</span>
+      </div>
+      <div class="optlist reveal">
+        <div><b>4</b><span>efeitos de vidro, do acrílico ao transparente</span></div>
+        <div><b>3</b><span>tons: escuro, claro ou seguindo o Windows</span></div>
+        <div><b>4</b><span>posições: embaixo, em cima, esquerda ou direita</span></div>
+        <div><b>3</b><span>reações ao mouse: ampliação, escala ou nada</span></div>
+        <div><b>3</b><span>animações de abertura: pulo, pulso ou tremor</span></div>
+        <div><b>3</b><span>fundos para os ícones, em qualquer cor</span></div>
+        <div><b>2</b><span>indicadores de aberto, ponto ou traço, com ou sem a cor do workspace</span></div>
+        <div><b>3</b><span>arrumações da bandeja: em linha, em grade ou compacta</span></div>
+        <div><b>3</b><span>lugares para widgets: com os apps, depois dos abertos ou depois da bandeja</span></div>
+        <div><b>6</b><span>estilos de calendário com a sua agenda Google, Outlook ou iCloud</span></div>
+        <div><b>9</b><span>mascotes: gato, cachorro, passarinho, dragão, dino e mais</span></div>
+        <div><b>14</b><span>cidades no relógio mundial</span></div>
+        <div><b>6</b><span>formatos de cor no conta-gotas</span></div>
+        <div><b>9</b><span>workspaces com nome e cor próprios</span></div>
+        <div><b>∞</b><span>ordem livre: arraste apps, pastas, espaçadores e separadores para onde quiser</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ LEVE -->
+  <section class="sec" id="leve" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <h2>Leve de verdade</h2>
+        <p class="lead">Feito em Rust direto sobre o Windows, sem navegador embutido e sem runtime. O desfoque é do próprio Windows</p>
+      </div>
+      <div class="bento">
+        <div class="card s2 reveal"><div class="stat" style="padding:0"><div class="n">2 MB</div></div><h3>Um arquivo só</h3><p>Sem instalador, sem conta e sem admin. Baixou, abriu, pronto</p></div>
+        <div class="card s2 reveal"><div class="stat" style="padding:0"><div class="n">0%</div></div><h3>Parado não gasta</h3><p>Nada é redesenhado sem motivo. Tudo acontece por eventos do Windows</p></div>
+        <div class="card s2 reveal"><div class="stat" style="padding:0"><div class="n">1 tile</div></div><h3>Só o que mudou</h3><p>Quando o relógio vira, só ele é redesenhado. CPU e rede só são lidas se tem widget mostrando</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ PREÇO -->
+  <section class="sec" id="preco" style="padding-top:0">
+    <div class="wrap">
+      <div class="price-wrap">
+        <div class="price-card glass reveal" id="comprar">
+          <div class="ref-pill glass" data-ref-pill hidden style="align-self:flex-start">
+            <span class="av" data-ref-initial>A</span>
+            <span>Indicação de <b data-ref-name>Alguém</b></span>
+          </div>
+          <div class="amount"><span class="cur">R$</span><span class="val">8,90</span></div>
+          <p class="once">Uma vez só. Sem assinatura, sem mensalidade</p>
+          <button class="btn btn-primary btn-lg" data-buy style="width:100%">Comprar o GlassDock</button>
+          <div class="pay-methods"><span>PIX</span><span>Cartão</span><span>Download na hora</span></div>
+        </div>
+        <div class="card reveal" style="padding:38px;display:flex;flex-direction:column;gap:22px">
+          <h3 style="font-size:26px">Tudo incluído</h3>
+          <ul class="checks">
+            <li>A dock completa, com prévias, workspaces e bandeja</li>
+            <li>Os 26 widgets e todos os estilos</li>
+            <li>Todas as opções de personalização</li>
+            <li>Atualizações sem pagar de novo</li>
+            <li>Funciona no Windows 10 e no 11</li>
+          </ul>
+          <p class="dim" style="font-size:15px">O pagamento é processado pela AbacatePay. Assim que confirmar, o download aparece na tela</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ INDIQUE -->
+  <section class="wrap">
+    <div class="ref-teaser card reveal">
+      <div style="display:flex;flex-direction:column;gap:18px">
+        <h2>Indique e fique com metade</h2>
+        <p class="lead">Crie seu link em 30 segundos. Cada pessoa que comprar por ele te rende <b style="color:#fff">50% da compra</b> direto no seu PIX</p>
+        <div><a class="btn btn-primary btn-lg" href="/indique">Criar meu link</a></div>
+      </div>
+      <div style="text-align:center">
+        <div class="money grad-text">R$ 4,45</div>
+        <p class="muted">por venda, sem limite</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ FAQ -->
+  <section class="sec" id="faq">
+    <div class="wrap">
+      <div class="sec-head reveal"><h2>Perguntas</h2></div>
+      <div class="faq reveal">
+        <details><summary>Funciona no Windows 10?</summary><p>Funciona no Windows 10 e no Windows 11. No 11 o vidro fica ainda mais bonito</p></details>
+        <details><summary>Preciso instalar alguma coisa?</summary><p>Não. É um arquivo de 2 MB: coloque numa pasta sua e abra. Não pede administrador nem conta. Se quiser, ele abre junto com o Windows</p></details>
+        <details><summary>E se eu quiser a barra de volta?</summary><p>É só sair do GlassDock (botão direito num espaço vazio da dock). A barra do Windows volta exatamente como estava, mesmo se o app fechar de repente</p></details>
+        <details><summary>O Windows mostrou um aviso ao abrir</summary><p>É o SmartScreen, que avisa sobre programas sem assinatura digital. Clique em Mais informações e depois em Executar assim mesmo</p></details>
+        <details><summary>É assinatura?</summary><p>Não. São R$ 8,90 uma vez só, com as atualizações incluídas</p></details>
+        <details><summary>Como recebo depois de pagar?</summary><p>Pagou com PIX ou cartão, a página de download abre sozinha. Guarde o link dela para baixar de novo quando quiser</p></details>
+        <details><summary>Pesa no computador?</summary><p>Quase nada. Parado ele não redesenha nada e só lê CPU, memória e rede se algum widget estiver mostrando</p></details>
+        <details><summary>Dá para ver minha agenda?</summary><p>Dá. Cole o endereço ICS da sua agenda Google, Outlook ou iCloud e os compromissos aparecem nos widgets de calendário</p></details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap row">
+    <a class="brand" href="/"><img src="/assets/icon.svg" alt="">GlassDock</a>
+    <nav>
+      <a href="#widgets">Widgets</a>
+      <a href="#personalize">Personalize</a>
+      <a href="#preco">Preço</a>
+      <a href="/indique">Indique e ganhe</a>
+    </nav>
+    <span>© <span id="yr">2026</span> GlassDock</span>
+  </div>
+</footer>
+
+<div id="navdock" class="navdock" aria-label="Navegação"></div>
+<div class="toast glass" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/assets/dock.js"></script>
+<script src="/assets/buy.js"></script>
+<script src="/assets/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Seu GlassDock</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#08080c">
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/style.css">
+  <style>
+    .ty { min-height: 100svh; display: grid; place-items: center; padding: 110px 16px 60px; position: relative; isolation: isolate; }
+    .ty .wall { position: fixed; inset: 0; z-index: -1; background: var(--wall); }
+    .ty .wall::after { content: ''; position: absolute; inset: 0; background: rgba(8,8,12,.45); }
+    .box { width: 100%; max-width: 620px; padding: 40px; display: flex; flex-direction: column; gap: 18px; align-items: center; text-align: center; }
+    @media (max-width: 560px) { .box { padding: 28px 20px; } }
+    .box h1 { font-size: clamp(34px, 6vw, 52px); }
+    .box .big-ico { width: 84px; height: 84px; }
+    .steps-i { padding: 0; margin: 6px 0; text-align: left; display: flex; flex-direction: column; gap: 10px; width: 100%; margin: 6px 0; counter-reset: s; }
+    .steps-i li { list-style: none; display: flex; gap: 12px; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.05); font-size: 15px; color: var(--text-2); }
+    .steps-i li::before { counter-increment: s; content: counter(s); flex: none; width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; background: var(--accent); color: #fff; font-weight: 700; font-size: 13px; }
+    .steps-i b { color: #fff; font-weight: 600; }
+    .save { display: flex; gap: 8px; width: 100%; }
+    .save input { flex: 1; min-width: 0; height: 42px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0,0,0,.3); padding: 0 12px; font-size: 13px; color: var(--text-2); }
+    .ref-cta { width: 100%; padding: 18px; border-radius: 18px; background: linear-gradient(135deg, rgba(48,209,88,.18), rgba(10,132,255,.14)); display: flex; align-items: center; justify-content: space-between; gap: 14px; text-align: left; flex-wrap: wrap; }
+    .state[hidden] { display: none !important; }
+    .pulse-dot { width: 64px; height: 64px; border-radius: 50%; background: radial-gradient(circle, var(--accent-2), var(--accent-deep)); animation: pd 1.6s ease-in-out infinite; }
+    @keyframes pd { 0%,100% { transform: scale(.85); box-shadow: 0 0 0 0 rgba(10,132,255,.5); } 50% { transform: scale(1); box-shadow: 0 0 0 22px rgba(10,132,255,0); } }
+  </style>
+</head>
+<body>
+<header class="topbar glass">
+  <a class="brand" href="/"><img src="/assets/icon.svg" alt="">GlassDock</a>
+  <nav class="topnav"><a class="link keep" href="/indique">Indique e ganhe</a></nav>
+</header>
+
+<main class="ty">
+  <div class="wall"></div>
+
+  <div class="box glass state" id="st-wait">
+    <div class="pulse-dot"></div>
+    <h1>Confirmando seu pagamento</h1>
+    <p class="muted">No PIX costuma levar alguns segundos. Pode deixar esta página aberta</p>
+    <p class="hint" id="wait-hint"></p>
+  </div>
+
+  <div class="box glass state" id="st-paid" hidden>
+    <img class="big-ico" src="/assets/icon.svg" alt="">
+    <h1>Pronto, o GlassDock é seu</h1>
+    <a class="btn btn-primary btn-lg" id="dl" href="#" style="width:100%">Baixar o GlassDock</a>
+    <ol class="steps-i">
+      <li><span>Coloque o <b>GlassDock.exe</b> numa pasta sua, por exemplo Documentos\Apps</span></li>
+      <li><span>Dê dois cliques. Se o Windows avisar, clique em <b>Mais informações</b> e depois em <b>Executar assim mesmo</b></span></li>
+      <li><span>A barra some e a dock aparece. Botão direito num espaço vazio da dock abre os ajustes</span></li>
+    </ol>
+    <p class="hint" style="width:100%;text-align:left">Guarde este link para baixar de novo quando quiser</p>
+    <div class="save"><input id="save-url" readonly><button class="btn btn-ghost btn-sm" id="copy-save" type="button">Copiar</button></div>
+    <div class="ref-cta">
+      <div><b>Gostou? Ganhe R$ 4,45 por indicação</b><p class="hint">Metade de cada venda vai para o seu PIX</p></div>
+      <a class="btn btn-primary btn-sm" href="/indique">Criar meu link</a>
+    </div>
+  </div>
+
+  <div class="box glass state" id="st-fail" hidden>
+    <h1 id="fail-title">Esse pagamento não foi concluído</h1>
+    <p class="muted" id="fail-text">O prazo do PIX acabou ou o pagamento foi cancelado. Nada foi cobrado</p>
+    <a class="btn btn-primary btn-lg" href="/#preco">Tentar de novo</a>
+  </div>
+</main>
+<div class="toast glass" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const show = (id) => document.querySelectorAll('.state').forEach((e) => (e.hidden = e.id !== id));
+  let o = new URLSearchParams(location.search).get('o');
+  if (!o) { try { o = localStorage.getItem('gd_last_order'); } catch {} }
+  if (!o || !/^gd_[a-z0-9]{12}$/.test(o)) {
+    $('#fail-title').textContent = 'Não achamos o seu pedido';
+    $('#fail-text').textContent = 'Abra o link que você salvou depois da compra ou fale com o suporte';
+    return show('st-fail');
+  }
+  if (!location.search.includes('o=')) history.replaceState(null, '', '/obrigado?o=' + o);
+  $('#save-url').value = location.origin + '/obrigado?o=' + o;
+  $('#copy-save').onclick = async () => {
+    try { await navigator.clipboard.writeText($('#save-url').value); } catch { $('#save-url').select(); document.execCommand('copy'); }
+    const t = $('#toast'); t.textContent = 'Link copiado'; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2500);
+  };
+
+  let tries = 0;
+  async function check() {
+    tries++;
+    try {
+      const r = await fetch('/api/order?o=' + o, { cache: 'no-store' });
+      const d = await r.json();
+      if (d.status === 'paid') {
+        $('#dl').href = d.download;
+        return show('st-paid');
+      }
+      if (['expired', 'cancelled', 'refunded'].includes(d.status)) return show('st-fail');
+      if (r.status === 404) {
+        $('#fail-title').textContent = 'Não achamos o seu pedido';
+        $('#fail-text').textContent = 'Se você já pagou, fale com o suporte e mande o comprovante';
+        return show('st-fail');
+      }
+    } catch {}
+    if (tries === 20) $('#wait-hint').textContent = 'Ainda esperando a confirmação. Se pagou com cartão, pode levar um pouco mais';
+    setTimeout(check, tries < 40 ? 3000 : 10000);
+  }
+  check();
+})();
+</script>
+</body>
+</html>

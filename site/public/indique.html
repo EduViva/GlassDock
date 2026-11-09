@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Indique o GlassDock e ganhe 50%</title>
+  <meta name="description" content="Crie seu link do GlassDock e ganhe 50% de cada compra feita por ele, direto no seu PIX">
+  <meta name="theme-color" content="#08080c">
+  <meta property="og:title" content="Indique o GlassDock e ganhe 50% de cada venda">
+  <meta property="og:description" content="R$ 4,45 no seu PIX por cada pessoa que comprar pelo seu link">
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/indique.css">
+</head>
+<body>
+
+<header class="topbar glass">
+  <a class="brand" href="/"><img src="/assets/icon.svg" alt="">GlassDock</a>
+  <nav class="topnav">
+    <a class="link" href="/">O app</a>
+    <a class="link keep" href="#painel" id="nav-panel" hidden>Meu painel</a>
+    <a class="btn btn-primary btn-sm" href="#criar" id="nav-create">Criar meu link</a>
+  </nav>
+</header>
+
+<main>
+  <section class="rhero">
+    <div class="wall"></div>
+    <div class="wrap rhero-in">
+      <h1>Indique e ganhe <span class="grad-money">50%</span> de cada venda</h1>
+      <p class="lead">Cada pessoa que comprar o GlassDock pelo seu link te rende R$ 4,45 no PIX. Sem limite de vendas e sem precisar comprar antes</p>
+      <div class="linkdemo glass" aria-hidden="true">
+        <span class="host" data-host>glassdock.com.br</span><span class="slash">/</span><span class="typed" id="typed">ana</span><span class="caret"></span>
+      </div>
+      <div class="hero-cta">
+        <a class="btn btn-primary btn-lg" href="#criar">Criar meu link grátis</a>
+        <a class="btn btn-ghost btn-lg" href="#como">Como funciona</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ COMO FUNCIONA -->
+  <section class="sec" id="como">
+    <div class="wrap">
+      <div class="steps">
+        <div class="card step reveal">
+          <span class="num">1</span>
+          <h3>Crie seu link</h3>
+          <p class="muted">Seu nome, seu e-mail e a chave PIX onde quer receber. Leva meio minuto</p>
+        </div>
+        <div class="card step reveal">
+          <span class="num">2</span>
+          <h3>Mande para quem usa Windows</h3>
+          <p class="muted">Quem abrir vê que foi você que indicou. O link vale por 30 dias depois do clique</p>
+        </div>
+        <div class="card step reveal">
+          <span class="num">3</span>
+          <h3>Receba no PIX</h3>
+          <p class="muted">A cada compra confirmada, R$ 4,45 entram no seu painel e vão para a sua chave PIX</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ SIMULADOR -->
+  <section class="wrap">
+    <div class="calc card reveal">
+      <div class="calc-l">
+        <h2>Faça as contas</h2>
+        <p class="lead">Quantas pessoas você conhece que vivem reclamando da barra de tarefas?</p>
+        <div class="field" style="margin-top:12px">
+          <label for="people"><span id="people-n">20</span> pessoas comprando pelo seu link</label>
+          <input type="range" id="people" min="1" max="200" value="20">
+        </div>
+      </div>
+      <div class="calc-r">
+        <div class="calc-v grad-money" id="earn">R$ 89,00</div>
+        <p class="muted">no seu PIX</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ FORMULÁRIO / PAINEL -->
+  <section class="sec" id="criar">
+    <div class="wrap narrow">
+      <div class="glass form-card reveal" id="form-card">
+        <h2>Criar meu link</h2>
+        <p class="muted">Sem senha. Você recebe uma chave de acesso para acompanhar as vendas</p>
+        <form id="ref-form" novalidate>
+          <div class="field"><label for="f-name">Seu nome</label><input class="input" id="f-name" name="name" autocomplete="name" placeholder="Como você quer aparecer" required maxlength="60"></div>
+          <div class="field"><label for="f-email">E-mail</label><input class="input" id="f-email" name="email" type="email" autocomplete="email" placeholder="voce@email.com" required></div>
+          <div class="row2">
+            <div class="field"><label for="f-pixtype">Tipo de chave PIX</label>
+              <select class="select" id="f-pixtype" name="pixType">
+                <option value="CPF">CPF</option>
+                <option value="EMAIL">E-mail</option>
+                <option value="PHONE">Celular</option>
+                <option value="CNPJ">CNPJ</option>
+                <option value="RANDOM">Chave aleatória</option>
+              </select>
+            </div>
+            <div class="field"><label for="f-pix">Chave PIX</label><input class="input" id="f-pix" name="pixKey" placeholder="000.000.000-00" required maxlength="120"></div>
+          </div>
+          <div class="field">
+            <label for="f-slug">Seu link</label>
+            <div class="prefixed"><span><span data-host>glassdock.com.br</span>/</span><input id="f-slug" name="slug" placeholder="seunome" maxlength="24" autocapitalize="off" autocomplete="off" spellcheck="false"></div>
+            <span class="hint">Deixe em branco para usar o seu primeiro nome</span>
+          </div>
+          <p class="form-error" id="f-error"></p>
+          <button class="btn btn-primary btn-lg" type="submit" style="width:100%">Criar meu link</button>
+          <p class="hint" style="text-align:center">Já tem um link? <a href="#" id="have-key">Entrar com a chave de acesso</a></p>
+        </form>
+        <form id="key-form" hidden novalidate>
+          <div class="field"><label for="f-key">Chave de acesso</label><input class="input" id="f-key" placeholder="20 letras e números" autocomplete="off" spellcheck="false" maxlength="20"></div>
+          <p class="form-error" id="k-error"></p>
+          <button class="btn btn-primary btn-lg" type="submit" style="width:100%">Ver meu painel</button>
+          <p class="hint" style="text-align:center"><a href="#" id="no-key">Criar um link novo</a></p>
+        </form>
+      </div>
+
+      <div id="painel" hidden>
+        <div class="glass form-card" style="gap:18px">
+          <div class="hello"><span class="av" id="p-initial">A</span><div><h2 id="p-hello">Oi</h2><p class="muted">Este é o seu link de indicação</p></div></div>
+          <div class="mylink">
+            <span id="p-link">glassdock.com.br/ana</span>
+            <button class="btn btn-primary btn-sm" id="copy-link" type="button">Copiar</button>
+          </div>
+          <div class="share">
+            <a class="btn btn-ghost btn-sm" id="sh-wa" target="_blank" rel="noopener">WhatsApp</a>
+            <a class="btn btn-ghost btn-sm" id="sh-tg" target="_blank" rel="noopener">Telegram</a>
+            <a class="btn btn-ghost btn-sm" id="sh-x" target="_blank" rel="noopener">X</a>
+            <button class="btn btn-ghost btn-sm" id="sh-native" type="button" hidden>Mais opções</button>
+          </div>
+          <div class="pstats">
+            <div><b id="s-clicks">0</b><span>visitas</span></div>
+            <div><b id="s-sales">0</b><span>vendas</span></div>
+            <div><b id="s-pending">R$ 0,00</b><span>a receber</span></div>
+            <div><b id="s-paid">R$ 0,00</b><span>já recebido</span></div>
+          </div>
+          <div id="p-list" class="plist"></div>
+          <div class="keybox">
+            <div><b>Sua chave de acesso</b><p class="hint">Guarde. É com ela que você volta a este painel em outro aparelho</p></div>
+            <code id="p-key">••••</code>
+            <button class="btn btn-ghost btn-sm" id="copy-key" type="button">Copiar link do painel</button>
+          </div>
+          <p class="hint">PIX cadastrado: <span id="p-pix"></span> · <a href="#" id="logout">Sair deste painel</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ REGRAS -->
+  <section class="sec" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal"><h2>Regras simples</h2></div>
+      <div class="faq reveal">
+        <details><summary>Quanto eu ganho?</summary><p>50% de cada compra feita pelo seu link. Com o GlassDock a R$ 8,90, são R$ 4,45 por venda</p></details>
+        <details><summary>Preciso ter comprado?</summary><p>Não. Qualquer pessoa pode criar um link e indicar</p></details>
+        <details><summary>Quando o PIX cai?</summary><p>Depois que a compra é confirmada, a comissão aparece no seu painel e o PIX é enviado para a chave que você cadastrou</p></details>
+        <details><summary>Por quanto tempo a indicação vale?</summary><p>30 dias depois que a pessoa abre o seu link. Se ela voltar e comprar dentro desse prazo, a venda é sua</p></details>
+        <details><summary>Posso comprar pelo meu link?</summary><p>Pode, mas compra feita com o mesmo e-mail do cadastro não gera comissão</p></details>
+        <details><summary>E se a compra for reembolsada?</summary><p>A comissão daquela venda é cancelada</p></details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap row">
+    <a class="brand" href="/"><img src="/assets/icon.svg" alt="">GlassDock</a>
+    <nav><a href="/">O app</a><a href="/#preco">Preço</a><a href="/#faq">Perguntas</a></nav>
+    <span>© 2026 GlassDock</span>
+  </div>
+</footer>
+<div class="toast glass" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/assets/indique.js"></script>
+</body>
+</html>

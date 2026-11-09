@@ -1,0 +1,29 @@
+# Cloudflare Pages: site estático (public/) + Functions (functions/)
+name = "glassdock"
+compatibility_date = "2026-10-01"
+pages_build_output_dir = "public"
+
+# Banco chave-valor com indicadores, pedidos, comissões e o executável.
+# Crie com:  npx wrangler kv namespace create GD
+# e troque o id abaixo pelo que o comando mostrar.
+[[kv_namespaces]]
+binding = "GD"
+id = "COLOQUE_O_ID_DO_KV_AQUI"
+
+[vars]
+# externalId do produto na AbacatePay (R$ 8,90). O script npm run produto cria.
+PRODUCT_ID = "glassdock"
+PAYMENT_METHODS = "PIX,CARD"
+# "1" envia o PIX da comissão sozinho, assim que a compra é confirmada.
+# "0" deixa as comissões na página /admin para você pagar com um clique.
+AUTO_PAYOUT = "0"
+# Tarifa que a AbacatePay cobra por PIX enviado, em centavos. É somada ao
+# repasse para o indicador receber os R$ 4,45 inteiros.
+PAYOUT_FEE_CENTS = "0"
+MAX_DOWNLOADS = "15"
+
+# Segredos (não ficam neste arquivo):
+#   npx wrangler pages secret put ABACATEPAY_API_KEY
+#   npx wrangler pages secret put ABACATEPAY_WEBHOOK_SECRET
+#   npx wrangler pages secret put ADMIN_KEY
+# Para rodar local, copie .dev.vars.example para .dev.vars

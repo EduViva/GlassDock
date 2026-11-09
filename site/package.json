@@ -1,0 +1,14 @@
+{
+  "name": "glassdock-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev",
+    "deploy": "wrangler pages deploy",
+    "produto": "node scripts/criar-produto.mjs",
+    "subir-exe": "wrangler kv key put --binding=GD --remote file:GlassDock.exe --path=../dist/GlassDock.exe"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

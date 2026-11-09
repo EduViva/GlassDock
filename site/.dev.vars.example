@@ -1,0 +1,3 @@
+ABACATEPAY_API_KEY=abc_dev_coloque_sua_chave_de_teste
+ABACATEPAY_WEBHOOK_SECRET=um-segredo-qualquer
+ADMIN_KEY=uma-chave-longa-com-16-ou-mais-caracteres

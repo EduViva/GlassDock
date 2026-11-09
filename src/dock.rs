@@ -56,6 +56,8 @@ pub struct Slot {
     pub zone: u8,
     /// faz parte do grupo de apps (fixados + abertos juntos)
     pub in_block: bool,
+    /// ícone de status arrumado em grade (duas linhas)
+    pub grid: bool,
 }
 
 impl Slot {
@@ -79,6 +81,7 @@ impl Slot {
             stack: 1,
             zone: 0,
             in_block: false,
+            grid: false,
         }
     }
     pub fn is_app(&self) -> bool {
@@ -86,6 +89,7 @@ impl Slot {
     }
     pub fn draggable(&self) -> bool {
         matches!(self.kind, SlotKind::Pinned | SlotKind::Widget | SlotKind::Spacer | SlotKind::Folder | SlotKind::Start | SlotKind::Running)
+            || (self.kind == SlotKind::Sep && self.item.is_some())
     }
 }
 
@@ -348,7 +352,7 @@ impl Dock {
 
     pub fn trigger_rect(&self, cfg: &Config) -> RECT {
         let e = self.edge_rect(cfg);
-        let t = 2;
+        let t = 5;
         match cfg.general.position {
             DockPos::Bottom => RECT { left: e.left, top: e.bottom - t, right: e.right, bottom: e.bottom },
             DockPos::Top => RECT { left: e.left, top: e.top, right: e.right, bottom: e.top + t },
@@ -468,6 +472,20 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
                     slots.push(s);
                 }
             }
+            DockItem::Divider => {
+                let mut s = Slot::new(SlotKind::Sep, 0.3);
+                s.item = Some(i);
+                s.mag = false;
+                s.key = format!("divider:{}", spacer_n);
+                s.name = String::new();
+                spacer_n += 1;
+                if mixed && block_pos.is_some() {
+                    s.in_block = true;
+                    block.push(s);
+                } else {
+                    slots.push(s);
+                }
+            }
             DockItem::Folder { path, .. } => {
                 let mut s = Slot::new(SlotKind::Folder, 1.0);
                 s.item = Some(i);
@@ -565,7 +583,8 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
         let mut any_hidden = false;
         for ic in &icons_now {
             let exe = ic.key.split('|').next().unwrap_or("");
-            if pinned.iter().any(|p| p == &ic.key || *p == format!("{}|*", exe)) {
+            let layout = cfg.general.status_layout;
+            if layout != 2 && pinned.iter().any(|p| p == &ic.key || *p == format!("{}|*", exe)) {
                 let mut s = Slot::new(SlotKind::Tray, if vertical { 0.6 } else { 0.5 });
                 s.key = ic.key.clone();
                 s.name = ic.tip.clone();
@@ -596,6 +615,13 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
             s.small = true;
             s.name = "Bateria".into();
             status.push(s);
+        }
+        // grade: duas linhas na altura de um ícone (ocupa metade do espaço)
+        if cfg.general.status_layout >= 1 && !vertical {
+            for s in status.iter_mut() {
+                s.grid = true;
+                s.len = 0.46;
+            }
         }
     }
     if cfg.general.show_clock {
@@ -664,6 +690,45 @@ pub fn format_date_sys(st: &SYSTEMTIME) -> String {
 // Layout
 // ---------------------------------------------------------------------------
 
+/// Posições no eixo principal: início, comprimento, linha da grade
+/// (-1 = fora da grade, 0 = de cima, 1 = de baixo) e o total.
+fn place(slots: &[Slot], lens: &[f32], g: &Geo) -> (Vec<f32>, Vec<f32>, Vec<i8>, f32) {
+    let n = slots.len();
+    let mut starts = vec![0.0f32; n];
+    let mut ls = lens.to_vec();
+    let mut rows = vec![-1i8; n];
+    let mut u = 0.0f32;
+    let mut open: Option<usize> = None;
+    for i in 0..n {
+        if slots[i].grid {
+            if let Some(j) = open.take() {
+                let w = ls[j].max(lens[i]);
+                ls[j] = w;
+                ls[i] = w;
+                starts[i] = starts[j];
+                rows[i] = 1;
+                u = starts[j] + w;
+                continue;
+            }
+            if i > 0 {
+                u += if slots[i - 1].small { g.sgap } else { g.gap };
+            }
+            starts[i] = u;
+            rows[i] = 0;
+            open = Some(i);
+            u += lens[i];
+            continue;
+        }
+        open = None;
+        if i > 0 {
+            u += if slots[i].small && slots[i - 1].small { g.sgap } else { g.gap };
+        }
+        starts[i] = u;
+        u += lens[i];
+    }
+    (starts, ls, rows, u)
+}
+
 pub fn layout(d: &mut Dock, cfg: &Config, g: &Geo) {
     let s = g.s;
     let n = d.slots.len();
@@ -672,16 +737,9 @@ pub fn layout(d: &mut Dock, cfg: &Config, g: &Geo) {
         return;
     }
     // posições base
-    let mut base_u = vec![0.0f32; n];
-    let mut acc = 0.0;
-    for i in 0..n {
-        if i > 0 {
-            acc += if d.slots[i].small && d.slots[i - 1].small { g.sgap } else { g.gap };
-        }
-        base_u[i] = acc;
-        acc += d.slots[i].len * s;
-    }
-    let total0 = acc + 2.0 * g.pad_side;
+    let lens0: Vec<f32> = d.slots.iter().map(|x| x.len * s).collect();
+    let (base_u, base_len, _, inner0) = place(&d.slots, &lens0, g);
+    let total0 = inner0 + 2.0 * g.pad_side;
     let start0 = (g.main - total0) / 2.0 + g.pad_side;
     // fatores de ampliação
     let mouse_u = d.mouse.map(|(x, y)| d.unmap(g, x, y).0);
@@ -695,7 +753,7 @@ pub fn layout(d: &mut Dock, cfg: &Config, g: &Geo) {
                     continue;
                 }
                 let a = start0 + base_u[i];
-                let b = a + d.slots[i].len * s;
+                let b = a + base_len[i];
                 match hov {
                     Hover::Magnify => {
                         let dist = if mu < a { a - mu } else if mu > b { mu - b } else { 0.0 } + s * 0.5;
@@ -715,28 +773,25 @@ pub fn layout(d: &mut Dock, cfg: &Config, g: &Geo) {
             }
         }
     }
-    let mut total = 2.0 * g.pad_side;
-    for i in 0..n {
-        if i > 0 {
-            total += if d.slots[i].small && d.slots[i - 1].small { g.sgap } else { g.gap };
-        }
-        total += d.slots[i].len * s * if hov == Hover::Magnify { f[i] } else { 1.0 };
-    }
+    let lens: Vec<f32> = (0..n).map(|i| d.slots[i].len * s * if hov == Hover::Magnify { f[i] } else { 1.0 }).collect();
+    let (starts, ls, rows, inner) = place(&d.slots, &lens, g);
+    let total = inner + 2.0 * g.pad_side;
     let start = (g.main - total) / 2.0;
-    let mut u = start + g.pad_side;
     for i in 0..n {
-        if i > 0 {
-            u += if d.slots[i].small && d.slots[i - 1].small { g.sgap } else { g.gap };
-        }
-        let len_main = d.slots[i].len * s * if hov == Hover::Magnify { f[i] } else { 1.0 };
-        let cross = s * f[i];
-        let (draw_u, draw_len) = if hov == Hover::Scale {
+        let u = start + g.pad_side + starts[i];
+        let len_main = ls[i];
+        let (cross, v0) = if rows[i] >= 0 {
+            // grade de ícones de status: duas linhas na altura de um ícone
+            (s * 0.5, g.margin + g.pad_bottom + if rows[i] == 0 { s * 0.5 } else { 0.0 })
+        } else {
+            (s * f[i], g.margin + g.pad_bottom)
+        };
+        let (draw_u, draw_len) = if hov == Hover::Scale && rows[i] < 0 {
             let grow = d.slots[i].len * s * (f[i] - 1.0);
             (u - grow / 2.0, len_main + grow)
         } else {
             (u, len_main)
         };
-        let v0 = g.margin + g.pad_bottom;
         let mut r = d.map_rect(g, draw_u, draw_len, v0, cross);
         if let Some(t0) = d.bounce.get(&d.slots[i].key) {
             let t = (tick_ms().saturating_sub(*t0)) as f32 / 1000.0;
@@ -751,7 +806,6 @@ pub fn layout(d: &mut Dock, cfg: &Config, g: &Geo) {
         }
         d.slots[i].rect = r;
         d.slots[i].f = f[i];
-        u += len_main;
     }
     d.bar = d.map_rect(g, start, total, g.margin, g.thick);
 }
@@ -848,18 +902,31 @@ pub fn draw_start_icon(c: &Canvas, r: Rect, plate: bool) {
     }
 }
 
-fn draw_plate(c: &Canvas, r: Rect, dark: bool) {
-    let rad = r.w * 0.225;
-    let _ = dark;
-    c.fill_rrect_vgrad(r, rad, &[(0.0, Color(1.0, 1.0, 1.0, 0.96)), (1.0, Color(0.9, 0.91, 0.94, 0.96))]);
-    c.stroke_rrect(r.inset(0.5), rad, Color(0.0, 0.0, 0.0, 0.10), 1.0);
+#[derive(Clone, Copy)]
+pub struct Plate {
+    pub on: bool,
+    pub all: bool,
+    pub color: Color,
 }
 
-pub fn draw_app_icon(c: &Canvas, ic: Option<&icons::Icon>, r: Rect, plates: bool, dark: bool, fallback: &str) {
+pub fn plate_cfg(cfg: &Config) -> Plate {
+    let hex = cfg.appearance.plate_color.trim_start_matches('#');
+    let color = u32::from_str_radix(hex, 16).map(Color::hex).unwrap_or(WHITE);
+    Plate { on: cfg.appearance.plates, all: cfg.appearance.plate_all, color }
+}
+
+pub fn draw_plate(c: &Canvas, r: Rect, col: Color) {
+    let rad = r.w * 0.225;
+    c.fill_rrect_vgrad(r, rad, &[(0.0, col.mix(WHITE, 0.08)), (1.0, col.mix(BLACK, 0.07))]);
+    let edge = if col.luminance() > 0.5 { Color(0.0, 0.0, 0.0, 0.10) } else { Color(1.0, 1.0, 1.0, 0.16) };
+    c.stroke_rrect(r.inset(0.5), rad, edge, 1.0);
+}
+
+pub fn draw_app_icon(c: &Canvas, ic: Option<&icons::Icon>, r: Rect, plate: Plate, _dark: bool, fallback: &str) {
     match ic {
         Some(ic) => {
-            if plates && !ic.full {
-                draw_plate(c, r, dark);
+            if plate.on && (plate.all || !ic.full) {
+                draw_plate(c, r, plate.color);
                 c.bitmap(&ic.bmp, r.inset(r.w * 0.15), 1.0);
             } else {
                 c.bitmap(&ic.bmp, r, 1.0);
@@ -931,7 +998,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
         }
     }
     let th = theme(cfg);
-    let plates = cfg.appearance.plates;
+    let plate = plate_cfg(cfg);
     let (w, h) = (wr.right - wr.left, wr.bottom - wr.top);
     let ws_color = cfg.ws_index(d.ws).map(|i| Color::hex(WS_COLORS[cfg.workspaces[i].color as usize % 6].0)).unwrap_or(ACCENT);
     let hover = d.hover;
@@ -955,20 +1022,40 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
             return;
         }
         let rad = (g.s * 0.4 + 9.0 * g.sc).min(bar.h.min(bar.w) / 2.0);
-        // área "fantasma" que segura o mouse durante a ampliação
-        if mouse.is_some() || dragging.is_some() {
-            let grow = g.head;
-            let hold = match pos {
-                DockPos::Bottom => Rect::new(bar.x - g.s, bar.y - grow, bar.w + 2.0 * g.s, bar.h + grow),
-                DockPos::Top => Rect::new(bar.x - g.s, bar.y, bar.w + 2.0 * g.s, bar.h + grow),
-                DockPos::Left => Rect::new(bar.x, bar.y - g.s, bar.w + grow, bar.h + 2.0 * g.s),
-                DockPos::Right => Rect::new(bar.x - grow, bar.y - g.s, bar.w + grow, bar.h + 2.0 * g.s),
-            };
-            c.fill_rect(hold, Color(0.0, 0.0, 0.0, 1.0 / 255.0));
+        // Faixa quase invisível que segura o mouse só onde os ícones
+        // ampliados passam da barra (fora disso, os cliques vão para a tela).
+        if mouse.is_some() && cfg.appearance.hover == Hover::Magnify {
+            let mut over = 0.0f32;
+            for sl in slots.iter().filter(|s| s.mag) {
+                let o = match pos {
+                    DockPos::Bottom => bar.y - sl.rect.y,
+                    DockPos::Top => sl.rect.b() - bar.b(),
+                    DockPos::Left => sl.rect.r() - bar.r(),
+                    DockPos::Right => bar.x - sl.rect.x,
+                };
+                over = over.max(o);
+            }
+            if over > 1.0 {
+                let hold = match pos {
+                    DockPos::Bottom => Rect::new(bar.x, bar.y - over, bar.w, over + 1.0),
+                    DockPos::Top => Rect::new(bar.x, bar.b() - 1.0, bar.w, over + 1.0),
+                    DockPos::Left => Rect::new(bar.r() - 1.0, bar.y, over + 1.0, bar.h),
+                    DockPos::Right => Rect::new(bar.x - over, bar.y, over + 1.0, bar.h),
+                };
+                c.fill_rect(hold, Color(0.0, 0.0, 0.0, 1.0 / 255.0));
+            }
         }
-        // sombra, vidro, borda e brilho
+        // sombra só do lado da borda da tela, para não bloquear cliques em volta
         if dirty.is_none() {
-            c.shadow(bar.inset(4.0 * g.sc), rad, 16.0 * g.sc, 8.0 * g.sc, Color(0.0, 0.0, 0.0, 0.32));
+            let clip = match pos {
+                DockPos::Bottom => Rect::new(bar.x, bar.cy(), bar.w, w as f32),
+                DockPos::Top => Rect::new(bar.x, 0.0, bar.w, bar.cy()),
+                DockPos::Left => Rect::new(0.0, bar.y, bar.cx(), bar.h),
+                DockPos::Right => Rect::new(bar.cx(), bar.y, w as f32, bar.h),
+            };
+            c.push_clip(clip);
+            c.shadow(bar.inset(4.0 * g.sc), rad, 10.0 * g.sc, 4.0 * g.sc, Color(0.0, 0.0, 0.0, 0.32));
+            c.pop_axis_clip();
         }
         c.fill_rrect(bar, rad, th.fill);
         c.fill_rrect_vgrad(bar, rad, &[(0.0, Color(1.0, 1.0, 1.0, if th.dark { 0.10 } else { 0.30 })), (0.5, Color(1.0, 1.0, 1.0, 0.0))]);
@@ -977,7 +1064,23 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
         if !vertical {
             c.fill_rect(hl, Color(1.0, 1.0, 1.0, 0.10));
         }
+        let first = slots.iter().position(|s| !matches!(s.kind, SlotKind::Sep | SlotKind::Spacer));
+        let last = slots.iter().rposition(|s| !matches!(s.kind, SlotKind::Sep | SlotKind::Spacer));
+        let end_k = (rad - g.pad_side.min(g.pad_top)).max(0.0);
         for (i, sl) in slots.iter().enumerate() {
+            c.shape.set(None);
+            if Some(i) == first || Some(i) == last {
+                let r0 = sl.rect;
+                let k = if Some(i) == first {
+                    if vertical { [end_k, end_k, 0.0, 0.0] } else { [end_k, 0.0, 0.0, end_k] }
+                } else if vertical {
+                    [0.0, 0.0, end_k, end_k]
+                } else {
+                    [0.0, end_k, end_k, 0.0]
+                };
+                let k = if first == last { [end_k; 4] } else { k };
+                c.shape.set(Some((r0, k)));
+            }
             if let Some((ds, ..)) = dragging {
                 if ds == i && !dragging.unwrap().4 {
                     continue;
@@ -1025,7 +1128,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                 SlotKind::Pinned | SlotKind::Running => {
                     let ic = slot_icon(ctx_sh, sl, g.s * cfg.appearance.magnify.max(1.0));
                     c.shadow(r.inset(r.w * 0.08), r.w * 0.2, 5.0 * g.sc, 4.0 * g.sc, Color(0.04, 0.05, 0.12, 0.22));
-                    draw_app_icon(c, ic.as_ref(), r, plates, th.dark, &sl.name);
+                    draw_app_icon(c, ic.as_ref(), r, plate, th.dark, &sl.name);
                     if !sl.wins.is_empty() {
                         draw_indicator(c, cfg, &g, d_pos(pos), r, sl, if cfg.appearance.indicator_ws_color { ws_color } else { th.glyph }, &bar);
                     }
@@ -1066,7 +1169,12 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                 }
                 SlotKind::Folder | SlotKind::Downloads => {
                     if let Some(ic) = ctx_sh.icons.get(&sl.icon, (g.s * cfg.appearance.magnify.max(1.0)) as u32) {
-                        c.bitmap(&ic.bmp, r, 1.0);
+                        if plate.on && plate.all {
+                            draw_plate(c, r, plate.color);
+                            c.bitmap(&ic.bmp, r.inset(r.w * 0.15), 1.0);
+                        } else {
+                            c.bitmap(&ic.bmp, r, 1.0);
+                        }
                     }
                     if sl.kind == SlotKind::Downloads {
                         let b = r.w * 0.36;
@@ -1087,10 +1195,10 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                     if let Some(ti) = ics.iter().find(|t| t.key == sl.key) {
                         let key = format!("tray:{}:{}", ti.key, ti.hicon.0 as usize);
                         let bmp = ctx_sh.icons.get_hicon_cached(&key).or_else(|| ctx_sh.icons.put_hicon(&key, ti.hicon));
-                        let d = (g.s * 0.42).round();
+                        let d = (g.s * 0.42).min(r.h * 0.82).round();
                         let ir = r.centered(d, d);
                         if is_hover {
-                            c.fill_rrect(r.centered(r.w, g.s * 0.62), 6.0 * g.sc, th.glyph.a(0.12));
+                            c.fill_rrect(r.centered(r.w, (g.s * 0.62).min(r.h)), 6.0 * g.sc, th.glyph.a(0.12));
                         }
                         if let Some(b) = bmp {
                             c.bitmap(&b.bmp, ir, 1.0);
@@ -1103,7 +1211,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                 }
                 SlotKind::Chevron => {
                     if is_hover {
-                        c.fill_rrect(r.centered(r.w, g.s * 0.62), 6.0 * g.sc, th.glyph.a(0.12));
+                        c.fill_rrect(r.centered(r.w, (g.s * 0.62).min(r.h)), 6.0 * g.sc, th.glyph.a(0.12));
                     }
                     let gl = match pos {
                         DockPos::Bottom => 0xE70E,
@@ -1111,11 +1219,11 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                         DockPos::Left => 0xE76C,
                         DockPos::Right => 0xE76B,
                     };
-                    c.glyph(gl, r, g.s * 0.26, th.glyph);
+                    c.glyph(gl, r, (g.s * 0.26).min(r.h * 0.6), th.glyph);
                 }
                 SlotKind::Net | SlotKind::Vol | SlotKind::Bat => {
                     if is_hover {
-                        c.fill_rrect(r.centered(r.w, g.s * 0.62), 6.0 * g.sc, th.glyph.a(0.12));
+                        c.fill_rrect(r.centered(r.w, (g.s * 0.62).min(r.h)), 6.0 * g.sc, th.glyph.a(0.12));
                     }
                     let st = &ctx_sh.status;
                     let (gl, tip) = match sl.kind {
@@ -1130,7 +1238,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                         SlotKind::Vol => (st.vol_glyph(), if st.muted { "Sem som".into() } else { format!("Volume {:.0}%", st.vol * 100.0) }),
                         _ => (st.battery_glyph(), format!("Bateria {}%{}", st.battery.pct, if st.battery.charging { " · carregando" } else { "" })),
                     };
-                    c.glyph(gl, r, g.s * 0.34, th.glyph);
+                    c.glyph(gl, r, (g.s * 0.34).min(r.h * 0.66), th.glyph);
                     if is_hover {
                         label = Some((r, tip));
                     }
@@ -1159,6 +1267,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                     }
                 }
             }
+            c.shape.set(None);
             if drop_hover == Some(i) {
                 c.stroke_rrect(r.inset(-3.0 * g.sc), r.h.min(r.w) * 0.25, ACCENT, 2.0 * g.sc);
             }
@@ -1190,7 +1299,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                         _ => {
                             let ic = slot_icon(ctx_sh, sl, g.s * cfg.appearance.magnify.max(1.0));
                             let ic2 = if sl.kind == SlotKind::Folder { ctx_sh.icons.get(&sl.icon, (g.s * cfg.appearance.magnify.max(1.0)) as u32) } else { ic };
-                            draw_app_icon(c, ic2.as_ref(), rr, plates && sl.kind != SlotKind::Folder, th.dark, &sl.name);
+                            draw_app_icon(c, ic2.as_ref(), rr, plate, th.dark, &sl.name);
                         }
                     }
                     if out {

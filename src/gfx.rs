@@ -495,7 +495,7 @@ impl Surface {
                     }
                     g.rt.BeginDraw();
                     g.rt.Clear(Some(&TRANSPARENT.d2d()));
-                    let c = Canvas { rt: g.rt.cast().unwrap(), g, dc: g.rt.cast().ok() };
+                    let c = Canvas { rt: g.rt.cast().unwrap(), g, dc: g.rt.cast().ok(), shape: std::cell::Cell::new(None) };
                     f(&c);
                     let _ = g.rt.EndDraw(None, None);
                 }
@@ -509,7 +509,7 @@ impl Surface {
                         g.rt.BeginDraw();
                         g.rt.SetTransform(&Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: -(r.left as f32), M32: -(r.top as f32) });
                         g.rt.Clear(Some(&TRANSPARENT.d2d()));
-                        let c = Canvas { rt: g.rt.cast().unwrap(), g, dc: g.rt.cast().ok() };
+                        let c = Canvas { rt: g.rt.cast().unwrap(), g, dc: g.rt.cast().ok(), shape: std::cell::Cell::new(None) };
                         f(&c);
                         g.rt.SetTransform(&Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: 0.0, M32: 0.0 });
                         let _ = g.rt.EndDraw(None, None);
@@ -583,6 +583,9 @@ pub struct Canvas {
     pub g: &'static Gfx,
     /// interface 1.1, para redimensionar imagens com interpolação cúbica
     pub dc: Option<ID2D1DeviceContext>,
+    /// "molde": quando um retângulo arredondado coincide com este, usa
+    /// estes raios por canto [sup. esq., sup. dir., inf. dir., inf. esq.]
+    pub shape: std::cell::Cell<Option<(Rect, [f32; 4])>>,
 }
 
 pub const W_NORMAL: u32 = 400;
@@ -595,7 +598,58 @@ impl Canvas {
         unsafe { self.rt.FillRectangle(&r.d2d(), &self.g.brush(c)) }
     }
 
+    /// Raios por canto se `r` coincide com o molde atual.
+    fn shape_for(&self, r: Rect, rad: f32) -> Option<[f32; 4]> {
+        let (o, radii) = self.shape.get()?;
+        if (r.cx() - o.cx()).abs() > 1.5 || (r.cy() - o.cy()).abs() > 1.5 || (r.w - o.w).abs() > 3.5 || (r.h - o.h).abs() > 3.5 {
+            return None;
+        }
+        let shrink = ((o.w - r.w) / 2.0).max(0.0);
+        let lim = (r.w.min(r.h) / 2.0).max(0.0);
+        Some(radii.map(|k| (k - shrink).max(rad).min(lim)))
+    }
+
+    /// Geometria de retângulo com um raio por canto (cantos em Bézier).
+    pub fn rrect4_geo(&self, r: Rect, k: [f32; 4]) -> Option<ID2D1PathGeometry> {
+        let (geo, sink) = self.g.path()?;
+        let [tl, tr, br, bl] = k;
+        // constante do círculo por cúbicas: 4/3·(√2−1)
+        let q = 0.552_284_8f32;
+        unsafe {
+            let bez = |p1: (f32, f32), p2: (f32, f32), p3: (f32, f32)| D2D1_BEZIER_SEGMENT { point1: pt(p1.0, p1.1), point2: pt(p2.0, p2.1), point3: pt(p3.0, p3.1) };
+            sink.BeginFigure(pt(r.x + tl, r.y), D2D1_FIGURE_BEGIN_FILLED);
+            sink.AddLine(pt(r.r() - tr, r.y));
+            if tr > 0.0 {
+                sink.AddBezier(&bez((r.r() - tr + tr * q, r.y), (r.r(), r.y + tr - tr * q), (r.r(), r.y + tr)));
+            }
+            sink.AddLine(pt(r.r(), r.b() - br));
+            if br > 0.0 {
+                sink.AddBezier(&bez((r.r(), r.b() - br + br * q), (r.r() - br + br * q, r.b()), (r.r() - br, r.b())));
+            }
+            sink.AddLine(pt(r.x + bl, r.b()));
+            if bl > 0.0 {
+                sink.AddBezier(&bez((r.x + bl - bl * q, r.b()), (r.x, r.b() - bl + bl * q), (r.x, r.b() - bl)));
+            }
+            sink.AddLine(pt(r.x, r.y + tl));
+            if tl > 0.0 {
+                sink.AddBezier(&bez((r.x, r.y + tl - tl * q), (r.x + tl - tl * q, r.y), (r.x + tl, r.y)));
+            }
+            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+            let _ = sink.Close();
+        }
+        Some(geo)
+    }
+
+    fn fill_shape_with(&self, r: Rect, k: [f32; 4], b: &ID2D1Brush) {
+        if let Some(geo) = self.rrect4_geo(r, k) {
+            unsafe { self.rt.FillGeometry(&geo, b, None) }
+        }
+    }
+
     pub fn fill_rrect(&self, r: Rect, rad: f32, c: Color) {
+        if let Some(k) = self.shape_for(r, rad) {
+            return self.fill_shape_with(r, k, &self.g.brush(c).cast().unwrap());
+        }
         let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: rad, radiusY: rad };
         unsafe { self.rt.FillRoundedRectangle(&rr, &self.g.brush(c)) }
     }
@@ -622,6 +676,12 @@ impl Canvas {
     }
 
     pub fn stroke_rrect(&self, r: Rect, rad: f32, c: Color, w: f32) {
+        if let Some(k) = self.shape_for(r, rad) {
+            if let Some(geo) = self.rrect4_geo(r, k) {
+                unsafe { self.rt.DrawGeometry(&geo, &self.g.brush(c), w, None) };
+            }
+            return;
+        }
         let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: rad, radiusY: rad };
         unsafe { self.rt.DrawRoundedRectangle(&rr, &self.g.brush(c), w, None) }
     }
@@ -645,6 +705,9 @@ impl Canvas {
 
     pub fn fill_rrect_vgrad(&self, r: Rect, rad: f32, stops: &[(f32, Color)]) {
         if let Some(b) = self.linear(r.x, r.y, r.x, r.b(), stops) {
+            if let Some(k) = self.shape_for(r, rad) {
+                return self.fill_shape_with(r, k, &b.cast().unwrap());
+            }
             let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: rad, radiusY: rad };
             unsafe { self.rt.FillRoundedRectangle(&rr, &b) }
         }
@@ -655,6 +718,9 @@ impl Canvas {
         let a = angle.to_radians();
         let (dx, dy) = (a.sin() * r.w / 2.0, a.cos() * r.h / 2.0);
         if let Some(b) = self.linear(r.cx() - dx, r.cy() - dy, r.cx() + dx, r.cy() + dy, stops) {
+            if let Some(k) = self.shape_for(r, rad) {
+                return self.fill_shape_with(r, k, &b.cast().unwrap());
+            }
             let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: rad, radiusY: rad };
             unsafe { self.rt.FillRoundedRectangle(&rr, &b) }
         }
@@ -885,8 +951,14 @@ impl Canvas {
 
     pub fn push_rrect_clip(&self, r: Rect, rad: f32) {
         unsafe {
-            let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: rad, radiusY: rad };
-            let Ok(geo) = self.g.d2d.CreateRoundedRectangleGeometry(&rr) else { return };
+            let geo: ID2D1Geometry = match self.shape_for(r, rad).and_then(|k| self.rrect4_geo(r, k)) {
+                Some(g) => g.cast().unwrap(),
+                None => {
+                    let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: rad, radiusY: rad };
+                    let Ok(g) = self.g.d2d.CreateRoundedRectangleGeometry(&rr) else { return };
+                    g.cast().unwrap()
+                }
+            };
             let params = D2D1_LAYER_PARAMETERS {
                 contentBounds: r.d2d(),
                 geometricMask: std::mem::ManuallyDrop::new(Some(geo.cast().unwrap())),

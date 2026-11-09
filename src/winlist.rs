@@ -404,9 +404,18 @@ pub fn launch(app: &PinnedApp, new_window_hint: bool) {
             args = "--new-window".into();
         }
     }
-    if args.is_empty() {
-        shell_open(&target);
-    } else {
-        shell_exec(&target, Some(&args), None);
+    // Abre numa thread à parte: o Windows pode levar um tempo para resolver
+    // o atalho, e a dock continua respondendo (a animação começa na hora).
+    unsafe {
+        let _ = AllowSetForegroundWindow(ASFW_ANY);
     }
+    std::thread::spawn(move || unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        if args.is_empty() {
+            shell_open(&target);
+        } else {
+            shell_exec(&target, Some(&args), None);
+        }
+        CoUninitialize();
+    });
 }

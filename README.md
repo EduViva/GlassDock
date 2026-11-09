@@ -16,9 +16,10 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 ## O que tem
 
 **Dock**
-- Vidro com desfoque nativo do Windows, borda clara, brilho e sombra
+- Vidro com desfoque do Windows (composição, acrílico ou desfoque clássico) ou transparente sem desfoque; borda clara, brilho e sombra
 - Ampliação dos ícones estilo Mac (ou só escala, ou nada), nome do app ao passar o mouse
-- Ícones não quadrados ganham uma placa arredondada (dá para desligar)
+- Fundo (placa) nos ícones: só nos não quadrados, em todos (inclusive pastas e Downloads) ou em nenhum, com a cor que você escolher
+- Os itens das pontas acompanham a curva da barra
 - Apps fixados e abertos juntos, com ordem livre: arraste qualquer app (aberto ou fechado) para qualquer lugar do grupo; a ordem fica salva. Dá para voltar ao modo separado em Ajustes › Geral.
 - Indicador de aberto (ponto ou traço)
 - Animação de abertura: pulo, pulso ou tremor
@@ -30,13 +31,13 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Solte arquivos na dock: um `.exe`/atalho é fixado, uma pasta vira pilha, e soltar na Lixeira apaga
 - Botão Iniciar (abre o Iniciar do Windows; o botão direito abre o menu Win+X)
 - Pastas na dock, Downloads e Lixeira (com Esvaziar Lixeira)
-- Espaçadores pequeno e grande
+- Espaçadores pequeno e grande, e separador (barrinha)
 - Posição embaixo, em cima, à esquerda ou à direita
 - Ocultar automaticamente, esconder em tela cheia (jogos, vídeos) e reservar o espaço para janelas maximizadas
 - Vários monitores: a dock segue o ponteiro, ou uma dock por monitor
 - Ctrl+Alt+D leva o foco para a dock (setas, Enter, Esc)
 
-**Status e bandeja, em linha** (sem o quadrado grande)
+**Status e bandeja** em linha, em grade (duas linhas) ou compacto
 - Rede, volume (a roda do mouse muda o volume) e bateria; um clique abre as Configurações rápidas
 - Ícones da bandeja dos outros apps (Discord, OneDrive…): os fixados ficam em linha e o resto vai para a setinha. O clique e o botão direito vão para o próprio app.
 - Relógio com data no formato regional; o clique abre o calendário

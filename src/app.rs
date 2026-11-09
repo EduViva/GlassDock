@@ -53,6 +53,7 @@ const T_TOAST: usize = 12;
 const T_FOLLOW: usize = 13;
 const T_DUMP: usize = 20;
 const T_CLICK: usize = 21;
+const T_EDGE: usize = 22;
 
 static MAIN: AtomicIsize = AtomicIsize::new(0);
 
@@ -144,6 +145,7 @@ pub enum Act {
     UnstackAll(usize),
     RemoveItem(usize),
     AddSpacer(bool),
+    AddDivider,
     ToggleAutohide,
     SetHover(Hover),
     ToggleRunning,
@@ -397,6 +399,7 @@ impl App {
     }
 
     fn start(&mut self) {
+        glass::set_glass_mode(self.cfg.appearance.glass_mode);
         glass::enable_dark_menus(true);
         self.sh.status.init(self.main);
         self.sync_ws_list();
@@ -767,6 +770,9 @@ impl App {
                 d.hide = if d.hide < d.hide_target { (d.hide + sp).min(d.hide_target) } else { (d.hide - sp).max(d.hide_target) };
                 moved = true;
                 if d.hide >= 1.0 {
+                    unsafe {
+                        SetTimer(Some(self.main), T_EDGE, 120, None);
+                    }
                     glass::show(d.hwnd, false);
                     glass::show(d.plate, false);
                     glass::show(d.pet_hwnd, false);
@@ -975,9 +981,8 @@ impl App {
                             }
                         }
                     } else {
-                        unsafe {
-                            SetTimer(Some(self.main), T_SHOW, 110, None);
-                        }
+                        // encostou na borda: mostra na hora
+                        self.maybe_show();
                     }
                     return Some(LRESULT(0));
                 }
@@ -1078,6 +1083,15 @@ impl App {
                     T_PET => self.on_pet(),
                     T_PANEL => self.render_panel(),
                     T_TOAST => self.expire_toasts(),
+                    T_EDGE => {
+                        if self.docks.iter().any(|d| d.hide >= 1.0) {
+                            self.maybe_show();
+                        } else {
+                            unsafe {
+                                let _ = KillTimer(Some(self.main), T_EDGE);
+                            }
+                        }
+                    }
                     T_CLICK => {
                         unsafe {
                             let _ = KillTimer(Some(self.main), T_CLICK);
@@ -1273,7 +1287,7 @@ impl App {
         let p = glass::cursor_pos();
         for i in 0..self.docks.len() {
             let t = self.docks[i].trigger_rect(&self.cfg);
-            let near = p.x >= t.left - 1 && p.x <= t.right + 1 && p.y >= t.top - 2 && p.y <= t.bottom + 1;
+            let near = p.x >= t.left - 1 && p.x <= t.right + 1 && p.y >= t.top - 4 && p.y <= t.bottom + 1;
             if near && self.docks[i].hide > 0.5 {
                 // cursor escondido (jogos) não traz a dock
                 let mut ci = CURSORINFO { cbSize: std::mem::size_of::<CURSORINFO>() as u32, ..Default::default() };
@@ -1285,7 +1299,7 @@ impl App {
                 }
                 self.reveal(i);
                 unsafe {
-                    SetTimer(Some(self.main), T_HIDE, 700, None);
+                    SetTimer(Some(self.main), T_HIDE, 1200, None);
                 }
             }
         }
@@ -1469,7 +1483,7 @@ impl App {
             if d.drag.is_none() && ((x - x0).abs() + (y - y0).abs()) > 7.0 * g.sc {
                 if s == usize::MAX {
                     d.press = None;
-                } else if d.slots[s].kind == SlotKind::Sep {
+                } else if d.slots[s].kind == SlotKind::Sep && d.slots[s].item.is_none() {
                     let (_, v) = d.unmap(&g, x, y);
                     d.drag = Some(dock::Drag { slot: s, u: 0.0, v, out: false, target: s, resize: true, start_size: self.cfg.appearance.icon_size, start_v: v });
                 } else if d.slots[s].draggable() {
@@ -1546,7 +1560,7 @@ impl App {
         }
         if self.cfg.general.autohide || self.docks[i].fullscreen {
             unsafe {
-                SetTimer(Some(self.main), T_HIDE, 650, None);
+                SetTimer(Some(self.main), T_HIDE, 900, None);
             }
         }
     }
@@ -1765,8 +1779,9 @@ impl App {
         self.close_panel();
         if sl.wins.is_empty() {
             if let Some(app) = self.slot_app(i, s) {
-                winlist::launch(&app, false);
                 self.docks[i].bounce.insert(sl.key.clone(), tick_ms());
+                self.render(i);
+                winlist::launch(&app, false);
                 let k = if !app.aumid.is_empty() { winlist::group_key("", &app.aumid) } else { file_stem(&app.exe) };
                 self.pending_launch = Some((k, tick_ms(), self.docks[i].ws));
                 self.kick_anim();
@@ -2037,6 +2052,11 @@ impl App {
                     }
                     bar_menu = true;
                 }
+                SlotKind::Sep if sl.item.is_some() => {
+                    items.push(mi("Remover separador", Act::RemoveItem(sl.item.unwrap())));
+                    items.push(MItem::Sep);
+                    bar_menu = true;
+                }
                 SlotKind::WsDots | SlotKind::Sep => bar_menu = true,
             }
             if !bar_menu {
@@ -2048,6 +2068,7 @@ impl App {
         if bar_menu {
             items.push(mi("Adicionar espaçador pequeno", Act::AddSpacer(false)));
             items.push(mi("Adicionar espaçador grande", Act::AddSpacer(true)));
+            items.push(mi("Adicionar separador │", Act::AddDivider));
             items.push(MItem::Sep);
             items.push(mic("Ocultar automaticamente", Act::ToggleAutohide, self.cfg.general.autohide));
             let h = self.cfg.appearance.hover;
@@ -2243,6 +2264,13 @@ impl App {
                 let items = &mut self.cfg.workspaces[wsi].items;
                 let pos = items.iter().rposition(|x| matches!(x, DockItem::App(_) | DockItem::Start)).map(|p| p + 1).unwrap_or(items.len());
                 items.insert(pos, DockItem::Spacer { large });
+                self.mark_save();
+                self.rebuild_all();
+            }
+            Act::AddDivider => {
+                let items = &mut self.cfg.workspaces[wsi].items;
+                let pos = items.iter().rposition(|x| matches!(x, DockItem::App(_) | DockItem::Start)).map(|p| p + 1).unwrap_or(items.len());
+                items.insert(pos, DockItem::Divider);
                 self.mark_save();
                 self.rebuild_all();
             }

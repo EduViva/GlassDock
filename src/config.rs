@@ -27,6 +27,8 @@ pub enum DockItem {
     Widgets { ids: Vec<u32>, #[serde(default)] cur: usize, #[serde(default)] zone: u8 },
     Spacer { large: bool },
     Folder { path: String, #[serde(default)] list: bool, #[serde(default)] sort: u32 },
+    /// separador visível (barrinha)
+    Divider,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -146,6 +148,8 @@ pub struct General {
     pub hide_in_fullscreen: bool,
     /// apps fixados e abertos juntos, com ordem livre
     pub mixed_apps: bool,
+    /// ícones de status e bandeja: 0 em linha, 1 em grade (2 linhas), 2 compacto
+    pub status_layout: u32,
 }
 
 impl Default for General {
@@ -176,6 +180,7 @@ impl Default for General {
             follow_pointer: true,
             hide_in_fullscreen: true,
             mixed_apps: true,
+            status_layout: 0,
         }
     }
 }
@@ -193,6 +198,12 @@ pub struct Appearance {
     pub tint: Tint,
     pub opacity: f32,
     pub labels: bool,
+    /// 0 composição, 1 acrílico, 2 desfoque clássico, 3 transparente
+    pub glass_mode: u32,
+    /// fundo (placa) em todos os ícones, não só nos que não são quadrados
+    pub plate_all: bool,
+    /// cor da placa (#RRGGBB)
+    pub plate_color: String,
 }
 
 impl Default for Appearance {
@@ -208,6 +219,9 @@ impl Default for Appearance {
             tint: Tint::Dark,
             opacity: 0.52,
             labels: true,
+            glass_mode: 1,
+            plate_all: false,
+            plate_color: "#FFFFFF".into(),
         }
     }
 }

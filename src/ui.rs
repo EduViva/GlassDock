@@ -711,10 +711,11 @@ fn line_end(s: &str, ci: usize) -> usize {
 
 /// Fundo padrão dos painéis de vidro.
 pub fn panel_bg(c: &Canvas, r: Rect, rad: f32, light: bool) {
+    let solid = crate::glass::transparent_mode();
     if light {
-        c.fill_rrect(r, rad, Color(0.97, 0.97, 0.99, 0.70));
+        c.fill_rrect(r, rad, Color(0.97, 0.97, 0.99, if solid { 0.94 } else { 0.70 }));
     } else {
-        c.fill_rrect(r, rad, Color(0.09, 0.09, 0.11, 0.62));
+        c.fill_rrect(r, rad, Color(0.09, 0.09, 0.11, if solid { 0.93 } else { 0.62 }));
     }
     c.fill_rrect_vgrad(r, rad, &[(0.0, Color(1.0, 1.0, 1.0, 0.07)), (0.35, Color(1.0, 1.0, 1.0, 0.0))]);
     c.stroke_rrect(r.inset(0.5), rad, Color(1.0, 1.0, 1.0, 0.16), 1.0);

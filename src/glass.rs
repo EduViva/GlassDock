@@ -186,24 +186,72 @@ fn comp_attach(h: HWND) -> bool {
     })
 }
 
-/// Placa de vidro atrás de uma janela de conteúdo.
-pub fn create_plate(kind: u32, idx: usize, owner: Option<HWND>) -> HWND {
-    let h = create(kind, idx, WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP, WS_POPUP, owner, "GlassDockPlate");
+thread_local! {
+    static GLASS_MODE: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
+    /// janelas cuja placa usa o desfoque "accent" (precisam de recuo nos cantos)
+    static ACCENT_PLATES: std::cell::RefCell<std::collections::HashSet<isize>> = std::cell::RefCell::new(Default::default());
+}
+
+/// 0 composição, 1 acrílico, 2 desfoque clássico, 3 transparente
+pub fn set_glass_mode(m: u32) {
+    GLASS_MODE.with(|g| g.set(m.min(3)));
+}
+
+pub fn glass_mode() -> u32 {
+    GLASS_MODE.with(|g| g.get())
+}
+
+/// Sem desfoque nenhum (os painéis usam uma tinta mais forte).
+pub fn transparent_mode() -> bool {
+    glass_mode() == 3
+}
+
+fn plate_flags() -> WINDOW_EX_STYLE {
+    WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
+}
+
+fn plate_attrs(h: HWND, round: bool) {
     unsafe {
-        let pref = DWMWCP_DONOTROUND;
+        let pref = if round { DWMWCP_ROUND } else { DWMWCP_DONOTROUND };
         let _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &pref as *const _ as _, std::mem::size_of_val(&pref) as u32);
-        let policy = DWMNCRP_DISABLED;
-        let _ = DwmSetWindowAttribute(h, DWMWA_NCRENDERING_POLICY, &policy as *const _ as _, 4);
         let excluded: i32 = 1;
         let _ = DwmSetWindowAttribute(h, DWMWA_EXCLUDED_FROM_PEEK, &excluded as *const _ as _, 4);
     }
-    if !comp_attach(h) {
-        // sem composição: janela comum com o desfoque antigo e região
-        destroy(h);
-        let h2 = create(kind, idx, WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, WS_POPUP, owner, "GlassDockPlate");
-        enable_blur(h2);
-        return h2;
+}
+
+/// Placa de vidro atrás de uma janela de conteúdo.
+pub fn create_plate(kind: u32, idx: usize, owner: Option<HWND>) -> HWND {
+    let mut mode = glass_mode();
+    // as miniaturas das prévias precisam de uma placa de verdade
+    if mode == 3 && kind == K_PREVIEW_PLATE {
+        mode = 1;
     }
+    if mode == 3 {
+        // transparente: placa invisível e que não recebe cliques
+        let h = create(kind, idx, plate_flags() | WS_EX_LAYERED | WS_EX_TRANSPARENT, WS_POPUP, owner, "GlassDockPlate");
+        unsafe {
+            let _ = SetLayeredWindowAttributes(h, COLORREF(0), 0, LWA_ALPHA);
+        }
+        return h;
+    }
+    if mode == 0 {
+        let h = create(kind, idx, plate_flags() | WS_EX_NOREDIRECTIONBITMAP, WS_POPUP, owner, "GlassDockPlate");
+        plate_attrs(h, false);
+        unsafe {
+            let policy = DWMNCRP_DISABLED;
+            let _ = DwmSetWindowAttribute(h, DWMWA_NCRENDERING_POLICY, &policy as *const _ as _, 4);
+        }
+        if comp_attach(h) {
+            return h;
+        }
+        destroy(h);
+        mode = 1;
+    }
+    // acrílico / desfoque clássico pelo "accent" do DWM
+    let h = create(kind, idx, plate_flags(), WS_POPUP, owner, "GlassDockPlate");
+    plate_attrs(h, true);
+    enable_accent(h, if mode == 2 { 3 } else { 4 });
+    ACCENT_PLATES.with(|a| a.borrow_mut().insert(h.0 as isize));
     h
 }
 
@@ -225,12 +273,18 @@ struct WinCompAttrData {
 type SetWca = unsafe extern "system" fn(HWND, *mut WinCompAttrData) -> BOOL;
 
 pub fn enable_blur(h: HWND) {
+    enable_accent(h, 3);
+}
+
+pub fn enable_accent(h: HWND, state: u32) {
     unsafe {
         let Ok(user32) = GetModuleHandleW(w!("user32.dll")) else { return };
         let Some(f) = GetProcAddress(user32, s!("SetWindowCompositionAttribute")) else { return };
         let f: SetWca = std::mem::transmute(f);
         // ACCENT_ENABLE_BLURBEHIND = 3: desfoque gaussiano puro, a tinta é desenhada por nós.
-        let mut ap = AccentPolicy { state: 3, flags: 0, color: 0, anim: 0 };
+        // acrílico precisa de alguma cor (AABBGGRR); quase transparente = mais vidro
+        let color = if state == 4 { 0x10_14_12_12 } else { 0 };
+        let mut ap = AccentPolicy { state, flags: if state == 4 { 2 } else { 0 }, color, anim: 0 };
         let mut d = WinCompAttrData { attrib: 19, data: &mut ap as *mut _ as _, size: std::mem::size_of::<AccentPolicy>() };
         let _ = f(h, &mut d);
     }
@@ -254,8 +308,30 @@ pub fn place_plate(h: HWND, x: i32, y: i32, w: i32, hgt: i32, radius: i32, inser
             true
         });
         if !done {
+            let accent = ACCENT_PLATES.with(|a| a.borrow().contains(&(h.0 as isize)));
+            if accent {
+                // O desfoque "accent" ignora a região da janela; o Windows 11
+                // só arredonda 8 px. Encolhe a placa até ela caber inteira
+                // dentro da forma arredondada (as pontas ficam só com a tinta).
+                let dpi = windows::Win32::UI::HiDpi::GetDpiForWindow(h).max(96) as f32;
+                let c = 8.0 * dpi / 96.0 + 1.0;
+                let r = (radius as f32).min(w as f32 / 2.0).min(hgt as f32 / 2.0);
+                let (ix, iy) = if r <= c {
+                    (0.0, 0.0)
+                } else {
+                    let t = (r * 0.12).max(1.0);
+                    let rc = r - c;
+                    let i = rc - (rc * rc - (rc - t).max(0.0).powi(2)).max(0.0).sqrt();
+                    (i.ceil(), t.ceil())
+                };
+                let _ = SetWindowPos(h, None, x + ix as i32, y + iy as i32, (w - 2 * ix as i32).max(1), (hgt - 2 * iy as i32).max(1), SWP_NOACTIVATE | SWP_NOZORDER);
+            }
             let rgn = CreateRoundRectRgn(0, 0, w + 1, hgt + 1, radius * 2, radius * 2);
-            SetWindowRgn(h, Some(rgn), true);
+            if !accent {
+                SetWindowRgn(h, Some(rgn), true);
+            } else {
+                let _ = DeleteObject(rgn.into());
+            }
         }
     }
 }
@@ -271,6 +347,11 @@ pub fn is_visible(h: HWND) -> bool {
 }
 
 pub fn destroy(h: HWND) {
+    ACCENT_PLATES.with(|a| {
+        if let Ok(mut b) = a.try_borrow_mut() {
+            b.remove(&(h.0 as isize));
+        }
+    });
     COMP.with(|x| {
         if let Ok(mut b) = x.try_borrow_mut() {
             if let Some(c) = b.as_mut() {

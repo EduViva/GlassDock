@@ -288,9 +288,40 @@ fn page_appearance(app: &mut App, ui: &mut Ui) {
         ch = true;
     }
     ch |= ui.row_toggle(id("indc"), "Indicador com a cor do workspace", &mut a.indicator_ws_color);
-    ch |= ui.row_toggle(id("plates"), "Ícones que não são quadrados ganham uma placa arredondada", &mut a.plates);
+    let mut pm = if !a.plates { 0 } else if a.plate_all { 2 } else { 1 };
+    if ui.labeled_segmented(id("plates"), "Fundo dos ícones", &["Nenhum", "Só nos não quadrados", "Em todos"], &mut pm) {
+        a.plates = pm > 0;
+        a.plate_all = pm == 2;
+        ch = true;
+    }
+    if a.plates {
+        const PLATE_COLORS: [u32; 10] = [0xFFFFFF, 0xE9E9EE, 0x8E8E93, 0x2C2C32, 0x000000, 0x0A84FF, 0x30D158, 0xFF9F0A, 0xFF375F, 0xBF5AF2];
+        let r = ui.row(34.0);
+        let lw = (r.w * 0.38).min(170.0 * ui.s);
+        ui.c.text("Cor do fundo", Rect::new(r.x, r.y, lw, r.h), 12.5 * ui.s, W_NORMAL, TXT, Align::Left);
+        let cols: Vec<Color> = PLATE_COLORS.iter().map(|c| Color::hex(*c)).collect();
+        let cur_hex = u32::from_str_radix(a.plate_color.trim_start_matches('#'), 16).unwrap_or(0xFFFFFF);
+        let mut idx = PLATE_COLORS.iter().position(|c| *c == cur_hex).map(|i| i as u32).unwrap_or(99);
+        if ui.swatches(id("platecol"), Rect::new(r.x + lw, r.y, r.w - lw, r.h), &cols, &mut idx) {
+            if let Some(c) = PLATE_COLORS.get(idx as usize) {
+                a.plate_color = format!("#{:06X}", c);
+                ch = true;
+            }
+        }
+        let res = ui.labeled_input(id("platehex"), "Outra cor (#RRGGBB)", &mut a.plate_color, "#FFFFFF");
+        if res.changed && u32::from_str_radix(a.plate_color.trim_start_matches('#'), 16).is_ok() && a.plate_color.trim_start_matches('#').len() == 6 {
+            ch = true;
+        }
+    }
     ch |= ui.row_toggle(id("labels"), "Mostrar o nome ao passar o mouse", &mut a.labels);
     section(ui, "VIDRO");
+    let mut gm = a.glass_mode.min(3);
+    let mut glass_changed = false;
+    if ui.labeled_segmented(id("glass"), "Efeito do vidro", &["Composição", "Acrílico", "Desfoque", "Transparente"], &mut gm) {
+        a.glass_mode = gm;
+        glass_changed = true;
+    }
+    ui.note("Se a barra ficar escura e opaca em vez de vidro, experimente outro efeito. O desfoque depende do Windows (Configurações › Personalização › Cores › Efeitos de transparência ligado). \"Transparente\" sempre funciona: mostra o fundo sem desfocar.");
     let mut t = match a.tint {
         Tint::Dark => 0,
         Tint::Light => 1,
@@ -306,7 +337,10 @@ fn page_appearance(app: &mut App, ui: &mut Ui) {
         ch = true;
     }
     ui.note("O desfoque é o do próprio Windows: não custa CPU do GlassDock.");
-    if reposition {
+    if glass_changed {
+        glass::set_glass_mode(app.cfg.appearance.glass_mode);
+        app.recreate_docks();
+    } else if reposition {
         app.recreate_docks();
     } else if ch {
         app.sh.icons.clear();
@@ -431,7 +465,7 @@ fn page_workspaces(app: &mut App, ui: &mut Ui, sel: &mut usize, app_search: &mut
             }
             DockItem::App(a) => {
                 let ic = app.sh.icons.get(&crate::icons::icon_path(a), 48);
-                crate::dock::draw_app_icon(ui.c, ic.as_ref(), ir, app.cfg.appearance.plates, true, &a.name);
+                crate::dock::draw_app_icon(ui.c, ic.as_ref(), ir, crate::dock::plate_cfg(&app.cfg), true, &a.name);
                 a.name.clone()
             }
             DockItem::Widgets { ids, .. } => {
@@ -440,6 +474,10 @@ fn page_workspaces(app: &mut App, ui: &mut Ui, sel: &mut usize, app_search: &mut
                 ui.c.glyph(kind_glyph(&kind), ir, 13.0 * ui.s, TXT);
                 let names: Vec<String> = ids.iter().filter_map(|i| app.cfg.widget(*i).map(|w| w.name.clone())).collect();
                 format!("Widget: {}", names.join(" + "))
+            }
+            DockItem::Divider => {
+                ui.c.line(ir.cx(), ir.y + 4.0, ir.cx(), ir.b() - 4.0, TXT2, 1.5);
+                "Separador".to_string()
             }
             DockItem::Spacer { large } => {
                 ui.c.stroke_rrect(ir.inset(3.0), 6.0 * ui.s, TXT3, 1.0);
@@ -485,6 +523,11 @@ fn page_workspaces(app: &mut App, ui: &mut Ui, sel: &mut usize, app_search: &mut
     }
     if ui.button(id("addsp"), Rect::new(r.x + 2.0 * (bw + 6.0 * ui.s), r.y + 2.0, bw, r.h - 4.0), "Espaçador") {
         app.cfg.workspaces[*sel].items.push(DockItem::Spacer { large: false });
+        changed = true;
+    }
+    let r2 = ui.row(36.0);
+    if ui.button(id("adddiv"), Rect::new(r2.x, r2.y + 2.0, bw, r2.h - 4.0), "Separador │") {
+        app.cfg.workspaces[*sel].items.push(DockItem::Divider);
         changed = true;
     }
     let has_start = app.cfg.workspaces[*sel].items.iter().any(|i| matches!(i, DockItem::Start));
@@ -696,6 +739,10 @@ fn page_bar(app: &mut App, ui: &mut Ui) {
     let g = &mut app.cfg.general;
     let mut ch = false;
     ch |= ui.row_toggle(id("st"), "Ícones de status e da bandeja", &mut g.show_status);
+    if g.show_status {
+        ch |= ui.labeled_segmented(id("stl"), "Arrumação", &["Em linha", "Em grade", "Compacto"], &mut g.status_layout);
+        ui.note("Em grade: os ícones ficam em duas linhas e ocupam metade do espaço. Compacto: grade só com rede, volume e bateria; os ícones dos apps ficam na setinha.");
+    }
     ch |= ui.row_toggle(id("ck"), "Relógio", &mut g.show_clock);
     if g.show_clock {
         ch |= ui.row_toggle(id("dt"), "Mostrar a data", &mut g.show_date);

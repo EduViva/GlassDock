@@ -52,6 +52,8 @@ pub struct Slot {
     pub units: u32,
     pub widget: u32,
     pub stack: usize,
+    /// 0 = área dos fixados, 1 = apps abertos/Downloads/Lixeira, 2 = bandeja/relógio
+    pub zone: u8,
 }
 
 impl Slot {
@@ -73,6 +75,7 @@ impl Slot {
             units: 1,
             widget: 0,
             stack: 1,
+            zone: 0,
         }
     }
     pub fn is_app(&self) -> bool {
@@ -366,7 +369,7 @@ pub fn running_for_dock<'a>(d: &Dock, cfg: &Config, wins: &'a WinList, all_docks
             if all_docks > 1 && !cfg.general.apps_from_all_monitors && w.monitor != d.monitor.0 as isize {
                 return false;
             }
-            true
+            !cfg.is_hidden_app(&w.exe, &w.aumid)
         })
         .collect()
 }
@@ -387,6 +390,8 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
         s.mag = false;
         slots.push(s);
     }
+    let mut zone1: Vec<Slot> = vec![];
+    let mut zone2: Vec<Slot> = vec![];
     for (i, it) in ws.items.iter().enumerate() {
         match it {
             DockItem::Start => {
@@ -412,7 +417,7 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
                 }
                 slots.push(s);
             }
-            DockItem::Widgets { ids, cur } => {
+            DockItem::Widgets { ids, cur, zone } => {
                 let ids: Vec<u32> = ids.iter().copied().filter(|id| widgets.contains_key(id)).collect();
                 if ids.is_empty() {
                     continue;
@@ -428,7 +433,11 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
                 s.stack = ids.len();
                 s.name = cfg.widget(wid).map(|w| w.name.clone()).unwrap_or_default();
                 s.key = format!("w:{}", wid);
-                slots.push(s);
+                match zone {
+                    1 => zone1.push(s),
+                    2 => zone2.push(s),
+                    _ => slots.push(s),
+                }
             }
             DockItem::Spacer { large } => {
                 let mut s = Slot::new(SlotKind::Spacer, if *large { 1.0 } else { 0.5 });
@@ -447,6 +456,7 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
         }
     }
     // abertos que não estão fixados
+    let idx_r = slots.len();
     if cfg.general.show_running {
         let mut groups: Vec<Slot> = vec![];
         for (k, w) in running.iter().enumerate() {
@@ -474,6 +484,15 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
             slots.push(sep);
             slots.extend(groups);
         }
+    }
+    // widgets colocados depois dos apps abertos
+    if !zone1.is_empty() {
+        if slots.len() == idx_r {
+            let mut sep = Slot::new(SlotKind::Sep, 0.3);
+            sep.mag = false;
+            slots.push(sep);
+        }
+        slots.extend(zone1);
     }
     let mut tail: Vec<Slot> = vec![];
     if cfg.general.show_downloads {
@@ -544,11 +563,22 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
         s.name = "Relógio".into();
         status.push(s);
     }
+    let idx_s = slots.len();
     if !status.is_empty() {
         let mut sep = Slot::new(SlotKind::Sep, 0.3);
         sep.mag = false;
         slots.push(sep);
         slots.extend(status);
+    }
+    // widgets colocados depois da bandeja e do relógio
+    if !zone2.is_empty() {
+        let mut sep = Slot::new(SlotKind::Sep, 0.3);
+        sep.mag = false;
+        slots.push(sep);
+        slots.extend(zone2);
+    }
+    for (k, sl) in slots.iter_mut().enumerate() {
+        sl.zone = if k >= idx_s { 2 } else if k >= idx_r { 1 } else { 0 };
     }
     d.slots = slots;
 }
@@ -950,7 +980,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                     draw_start_icon(c, r, true);
                 }
                 SlotKind::Pinned | SlotKind::Running => {
-                    let ic = slot_icon(ctx_sh, sl, g.s * sl.f.max(1.0) * if plates { 0.75 } else { 1.0 });
+                    let ic = slot_icon(ctx_sh, sl, g.s * cfg.appearance.magnify.max(1.0));
                     c.shadow(r.inset(r.w * 0.08), r.w * 0.2, 5.0 * g.sc, 4.0 * g.sc, Color(0.04, 0.05, 0.12, 0.22));
                     draw_app_icon(c, ic.as_ref(), r, plates, th.dark, &sl.name);
                     if !sl.wins.is_empty() {
@@ -984,7 +1014,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                     }
                 }
                 SlotKind::Folder | SlotKind::Downloads => {
-                    if let Some(ic) = ctx_sh.icons.get(&sl.icon, (g.s * sl.f) as u32) {
+                    if let Some(ic) = ctx_sh.icons.get(&sl.icon, (g.s * cfg.appearance.magnify.max(1.0)) as u32) {
                         c.bitmap(&ic.bmp, r, 1.0);
                     }
                     if sl.kind == SlotKind::Downloads {
@@ -996,7 +1026,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                 }
                 SlotKind::Trash => {
                     let key = if trash_full { "trash:full" } else { "trash:empty" };
-                    match ctx_sh.icons.get_keyed(key, "shell:RecycleBinFolder", (g.s * sl.f) as u32) {
+                    match ctx_sh.icons.get_keyed(key, "shell:RecycleBinFolder", (g.s * cfg.appearance.magnify.max(1.0)) as u32) {
                         Some(ic) => c.bitmap(&ic.bmp, r, 1.0),
                         None => c.glyph(0xE74D, r, r.h * 0.6, th.glyph),
                     }
@@ -1107,8 +1137,8 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                         SlotKind::Start => draw_start_icon(c, rr, true),
                         SlotKind::Spacer => c.stroke_rrect(rr.inset(2.0), 8.0 * g.sc, th.glyph.a(0.5), 1.5),
                         _ => {
-                            let ic = slot_icon(ctx_sh, sl, g.s);
-                            let ic2 = if sl.kind == SlotKind::Folder { ctx_sh.icons.get(&sl.icon, g.s as u32) } else { ic };
+                            let ic = slot_icon(ctx_sh, sl, g.s * cfg.appearance.magnify.max(1.0));
+                            let ic2 = if sl.kind == SlotKind::Folder { ctx_sh.icons.get(&sl.icon, (g.s * cfg.appearance.magnify.max(1.0)) as u32) } else { ic };
                             draw_app_icon(c, ic2.as_ref(), rr, plates && sl.kind != SlotKind::Folder, th.dark, &sl.name);
                         }
                     }

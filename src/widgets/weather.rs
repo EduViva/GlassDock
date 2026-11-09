@@ -108,17 +108,17 @@ pub fn draw_icon(c: &Canvas, r: Rect, code: i64, day: bool) {
     let partly = code == 2;
     if clear || partly {
         if day {
-            sun(cx - if partly { s * 0.1 } else { 0.0 }, cy - if partly { s * 0.08 } else { 0.0 }, s * 0.2);
+            sun(cx - if partly { s * 0.1 } else { 0.0 }, cy - if partly { s * 0.08 } else { 0.0 }, s * if partly { 0.21 } else { 0.25 });
         } else {
-            moon(cx - if partly { s * 0.1 } else { 0.0 }, cy - if partly { s * 0.08 } else { 0.0 }, s * 0.24);
+            moon(cx - if partly { s * 0.1 } else { 0.0 }, cy - if partly { s * 0.08 } else { 0.0 }, s * 0.29);
         }
         if partly {
-            cloud(cx + s * 0.06, cy + s * 0.1, s * 0.7, Color::hex(0xF2F2F7));
+            cloud(cx + s * 0.06, cy + s * 0.1, s * 0.8, Color::hex(0xF2F2F7));
         }
         return;
     }
     let grey = if matches!(code, 95..=99) { Color::hex(0x8E8E9A) } else { Color::hex(0xD8D8E0) };
-    cloud(cx, cy - s * 0.08, s * 0.82, grey);
+    cloud(cx, cy - s * 0.08, s * 0.95, grey);
     match code {
         45 | 48 => {
             for i in 0..3 {
@@ -148,6 +148,11 @@ pub fn draw_icon(c: &Canvas, r: Rect, code: i64, day: bool) {
 impl Weather {
     pub fn load(v: &Value) -> Weather {
         let mut w = Weather { c: jget(v), data: None, rx: None, last: 0, search: String::new(), results: vec![], searching: false, failed: false };
+        if std::env::var("GLASSDOCK_TEST_FAKE_WEATHER").is_ok() {
+            // só para inspeção visual sem internet
+            w.data = Some(Data { temp: 21.0, feels: 22.0, code: 1, day: true, humidity: 60.0, wind: 8.0, days: (0..7).map(|i| Day { dow: i, code: [1, 2, 3, 61, 0, 95, 71][i as usize], max: 26.0, min: 17.0, rain: 30 }).collect(), hours: (0..6).map(|h| (12 + h, 21.0, 2)).collect() });
+            return w;
+        }
         w.fetch();
         w
     }
@@ -317,8 +322,10 @@ impl Widget for Weather {
                 t.fit_text(&sub, Rect::new(r.x, r.y + r.h * 0.52, r.w, r.h * 0.42), t.fs(0.125), W_NORMAL, WHITE.a(0.85), Align::Left);
             }
             _ => {
-                draw_icon(t.c, Rect::new(inner.x, inner.y, inner.w, inner.h * 0.52), d.code, d.day);
-                t.fit_display(&self.deg(d.temp), Rect::new(inner.x, inner.y + inner.h * 0.5, inner.w, inner.h * 0.5), t.fs(0.26), W_SEMIBOLD, WHITE, Align::Center);
+                // ícone grande em cima, temperatura embaixo
+                let ir = Rect::new(t.r.x, t.r.y + t.s * 0.04, t.r.w, t.r.h * 0.6);
+                draw_icon(t.c, ir, d.code, d.day);
+                t.fit_display(&self.deg(d.temp), Rect::new(inner.x, t.r.y + t.r.h * 0.6, inner.w, t.r.h * 0.34), t.fs(0.25), W_SEMIBOLD, WHITE, Align::Center);
             }
         }
     }

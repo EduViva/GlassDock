@@ -31,7 +31,7 @@ pub struct IconCache {
 impl IconCache {
     /// `path` pode ser um arquivo, pasta, .lnk ou "shell:AppsFolder\AUMID".
     pub fn get(&mut self, path: &str, px: u32) -> Option<Icon> {
-        let px = ((px + 15) / 16 * 16).clamp(16, 256);
+        let px = px.max(1).next_power_of_two().clamp(32, 256);
         let key = (path.to_lowercase(), px);
         if let Some(v) = self.map.get(&key) {
             return v.clone();
@@ -43,7 +43,7 @@ impl IconCache {
 
     /// Como `get`, mas com uma chave própria (o mesmo caminho em estados diferentes).
     pub fn get_keyed(&mut self, key: &str, path: &str, px: u32) -> Option<Icon> {
-        let px = ((px + 15) / 16 * 16).clamp(16, 256);
+        let px = px.max(1).next_power_of_two().clamp(32, 256);
         let k = (format!("key:{}", key), px);
         if let Some(v) = self.map.get(&k) {
             return v.clone();

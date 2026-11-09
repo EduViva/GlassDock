@@ -203,6 +203,21 @@ fn page_general(app: &mut App, ui: &mut Ui) {
     ch_general |= ui.row_toggle(id("wsel"), "Seletor de workspace (bolinhas)", &mut g.ws_selector);
     ch_general |= ui.row_toggle(id("dl"), "Mostrar Downloads", &mut g.show_downloads);
     ch_general |= ui.row_toggle(id("tr"), "Mostrar Lixeira", &mut g.show_trash);
+    section(ui, "APPS QUE NÃO APARECEM COMO ABERTOS");
+    ui.note("Apps que rodam em segundo plano. Para esconder outro, clique com o botão direito nele na dock › Não mostrar como aberto.");
+    let mut unhide = None;
+    for (k, h) in app.cfg.hidden_apps.iter().enumerate() {
+        let r = ui.row(32.0);
+        ui.c.text(h, Rect::new(r.x, r.y, r.w - 150.0 * ui.s, r.h), 12.5 * ui.s, W_NORMAL, TXT, Align::Left);
+        if ui.button(idn("unhide", k as u64), Rect::new(r.r() - 140.0 * ui.s, r.y + 3.0, 140.0 * ui.s, r.h - 6.0), "Mostrar de novo") {
+            unhide = Some(k);
+        }
+    }
+    if let Some(k) = unhide {
+        app.cfg.hidden_apps.remove(k);
+        ch_general = true;
+    }
+    let g = &mut app.cfg.general;
     section(ui, "PRÉVIAS DE JANELAS");
     ch_general |= ui.row_toggle(id("pv"), "Mostrar prévias ao parar o mouse num app", &mut g.previews);
     let mut delay = g.preview_delay_ms as f32;
@@ -616,6 +631,32 @@ fn page_edit_widget(app: &mut App, ui: &mut Ui, wid: u32, page: &mut Page) {
         let mut u = app.cfg.widgets[idx].units.clamp(1, maxu) - 1;
         if ui.labeled_segmented(id("wunits"), "Largura do tile", &opts, &mut u) {
             app.cfg.widgets[idx].units = u + 1;
+            rebuild = true;
+        }
+    }
+    {
+        // posição na dock (vale para todos os workspaces onde ele aparece)
+        let cur_zone = app
+            .cfg
+            .workspaces
+            .iter()
+            .flat_map(|w| w.items.iter())
+            .find_map(|it| match it {
+                DockItem::Widgets { ids, zone, .. } if ids.contains(&wid) => Some(*zone as u32),
+                _ => None,
+            })
+            .unwrap_or(0);
+        let mut z = cur_zone;
+        if ui.labeled_segmented(id("wzone"), "Lugar na dock", &["Com os apps", "Depois dos abertos", "Depois da bandeja"], &mut z) {
+            for ws in app.cfg.workspaces.iter_mut() {
+                for it in ws.items.iter_mut() {
+                    if let DockItem::Widgets { ids, zone, .. } = it {
+                        if ids.contains(&wid) {
+                            *zone = z as u8;
+                        }
+                    }
+                }
+            }
             rebuild = true;
         }
     }

@@ -22,7 +22,9 @@ pub struct PinnedApp {
 pub enum DockItem {
     Start,
     App(PinnedApp),
-    Widgets { ids: Vec<u32>, #[serde(default)] cur: usize },
+    /// `zone`: 0 = junto dos apps fixados, 1 = depois dos apps abertos,
+    /// 2 = depois da bandeja e do relógio
+    Widgets { ids: Vec<u32>, #[serde(default)] cur: usize, #[serde(default)] zone: u8 },
     Spacer { large: bool },
     Folder { path: String, #[serde(default)] list: bool, #[serde(default)] sort: u32 },
 }
@@ -219,6 +221,9 @@ pub struct Config {
     pub next_id: u32,
     /// Comando de status line do Claude Code que existia antes (encadeado)
     pub claude_prev_statusline: String,
+    /// Apps que nunca aparecem como abertos (exe ou AppUserModelID, minúsculo)
+    pub hidden_apps: Vec<String>,
+    pub hidden_defaults: bool,
 }
 
 impl Config {
@@ -232,7 +237,25 @@ impl Config {
         if c.workspaces.is_empty() {
             c = Config::first_run();
         }
+        if !c.hidden_defaults {
+            // apps que rodam em segundo plano mas mantêm uma janela "visível"
+            c.hidden_defaults = true;
+            for a in ["raycast.exe"] {
+                if !c.hidden_apps.iter().any(|x| x == a) {
+                    c.hidden_apps.push(a.into());
+                }
+            }
+        }
         c
+    }
+
+    pub fn is_hidden_app(&self, exe: &str, aumid: &str) -> bool {
+        if self.hidden_apps.is_empty() {
+            return false;
+        }
+        let name = std::path::Path::new(exe).file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let a = aumid.to_lowercase();
+        self.hidden_apps.iter().any(|h| (!name.is_empty() && *h == name) || (!a.is_empty() && *h == a))
     }
 
     pub fn save(&self) {
@@ -266,7 +289,7 @@ impl Config {
             items.extend(apps.iter().cloned().map(DockItem::App));
             if with_widgets {
                 for id in &w_ids {
-                    items.push(DockItem::Widgets { ids: vec![*id], cur: 0 });
+                    items.push(DockItem::Widgets { ids: vec![*id], cur: 0, zone: 0 });
                 }
             }
             Workspace { id, name: name.into(), color, items }

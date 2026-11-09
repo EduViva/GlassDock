@@ -13,11 +13,14 @@ struct Cfg {
     lookahead: u32,
     all_day: bool,
     urls: Vec<String>,
+    /// hora ao lado do bloco da data (relógio + calendário num tile só)
+    show_time: bool,
+    hours: u32,
 }
 
 impl Default for Cfg {
     fn default() -> Self {
-        Cfg { lookahead: 2, all_day: true, urls: vec![] }
+        Cfg { lookahead: 2, all_day: true, urls: vec![], show_time: false, hours: 0 }
     }
 }
 
@@ -174,10 +177,31 @@ impl Widget for Calendar {
         let inner = t.inner();
         let ev = self.upcoming();
         let mut area = inner;
-        if style == 1 || style == 2 {
+        if style == 1 || style == 2 || (self.c.show_time && style == 0) {
             let d = inner.h;
             self.date_block(t, Rect::new(inner.x, inner.y, d, d));
             area = Rect::new(inner.x + d + t.s * 0.14, inner.y, inner.w - d - t.s * 0.14, inner.h);
+        }
+        if self.c.show_time {
+            // hora em destaque e, embaixo, o próximo compromisso (ou a data)
+            let n = local_now();
+            let (tm, suf) = crate::widgets::clock::fmt_time(&n, self.c.hours, false);
+            let txt = if suf.is_empty() { tm } else { format!("{} {}", tm, suf) };
+            t.fit_display(&txt, Rect::new(area.x, area.y, area.w, area.h * 0.6), t.fs(0.32), W_SEMIBOLD, WHITE, Align::Left);
+            let sub_r = Rect::new(area.x, area.y + area.h * 0.58, area.w, area.h * 0.4);
+            match ev.first() {
+                Some(e) => {
+                    let col = Color::hex(CAL_COLORS[e.cal % CAL_COLORS.len()]);
+                    let dot = t.s * 0.035;
+                    t.c.fill_circle(sub_r.x + dot, sub_r.cy(), dot, col);
+                    let tr = Rect::new(sub_r.x + dot * 3.0, sub_r.y, sub_r.w - dot * 3.0, sub_r.h);
+                    t.fit_text(&format!("{} · {}", e.title, when_text(e)), tr, t.fs(0.12), W_MEDIUM, WHITE.a(0.75), Align::Left);
+                }
+                None => {
+                    t.fit_text(&format!("{} de {}", n.day, MESES[(n.month - 1) as usize]), sub_r, t.fs(0.12), W_MEDIUM, WHITE.a(0.65), Align::Left);
+                }
+            }
+            return;
         }
         if ev.is_empty() {
             let msg = if self.c.urls.is_empty() { "Sem agenda" } else { "Nada por agora" };
@@ -295,6 +319,12 @@ impl Widget for Calendar {
             sh.save = true;
         }
         if ui.row_toggle(id("ad"), "Eventos de dia inteiro", &mut self.c.all_day) {
+            sh.save = true;
+        }
+        if ui.row_toggle(id("st"), "Mostrar a hora ao lado da data", &mut self.c.show_time) {
+            sh.save = true;
+        }
+        if self.c.show_time && ui.labeled_segmented(id("hr"), "Horas", &["Sistema", "24 h", "12 h"], &mut self.c.hours) {
             sh.save = true;
         }
         ui.caption("AGENDAS (ENDEREÇO ICS)");

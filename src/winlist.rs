@@ -108,6 +108,29 @@ impl WinList {
                 return false;
             }
             let ex = WINDOW_EX_STYLE(GetWindowLongW(h, GWL_EXSTYLE) as u32);
+            // janelas "visíveis" que na prática não aparecem (apps de fundo):
+            // tamanho zero, fora de todas as telas ou totalmente transparentes
+            if !IsIconic(h).as_bool() {
+                let mut r = RECT::default();
+                let _ = GetWindowRect(h, &mut r);
+                if r.right - r.left <= 1 || r.bottom - r.top <= 1 {
+                    return false;
+                }
+                let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+                let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+                let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+                let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+                if r.right <= vx || r.bottom <= vy || r.left >= vx + vw || r.top >= vy + vh {
+                    return false;
+                }
+            }
+            if ex.contains(WS_EX_LAYERED) {
+                let mut alpha = 255u8;
+                let mut flags = LAYERED_WINDOW_ATTRIBUTES_FLAGS(0);
+                if GetLayeredWindowAttributes(h, None, Some(&mut alpha), Some(&mut flags)).is_ok() && flags.contains(LWA_ALPHA) && alpha == 0 {
+                    return false;
+                }
+            }
             let owner = GetWindow(h, GW_OWNER).unwrap_or_default();
             let appwin = ex.contains(WS_EX_APPWINDOW);
             if ex.contains(WS_EX_TOOLWINDOW) && !appwin {

@@ -495,7 +495,7 @@ impl Surface {
                     }
                     g.rt.BeginDraw();
                     g.rt.Clear(Some(&TRANSPARENT.d2d()));
-                    let c = Canvas { rt: g.rt.cast().unwrap(), g };
+                    let c = Canvas { rt: g.rt.cast().unwrap(), g, dc: g.rt.cast().ok() };
                     f(&c);
                     let _ = g.rt.EndDraw(None, None);
                 }
@@ -509,7 +509,7 @@ impl Surface {
                         g.rt.BeginDraw();
                         g.rt.SetTransform(&Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: -(r.left as f32), M32: -(r.top as f32) });
                         g.rt.Clear(Some(&TRANSPARENT.d2d()));
-                        let c = Canvas { rt: g.rt.cast().unwrap(), g };
+                        let c = Canvas { rt: g.rt.cast().unwrap(), g, dc: g.rt.cast().ok() };
                         f(&c);
                         g.rt.SetTransform(&Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: 0.0, M32: 0.0 });
                         let _ = g.rt.EndDraw(None, None);
@@ -581,6 +581,8 @@ impl Drop for Surface {
 pub struct Canvas {
     pub rt: ID2D1RenderTarget,
     pub g: &'static Gfx,
+    /// interface 1.1, para redimensionar imagens com interpolação cúbica
+    pub dc: Option<ID2D1DeviceContext>,
 }
 
 pub const W_NORMAL: u32 = 400;
@@ -858,7 +860,10 @@ impl Canvas {
 
     pub fn bitmap(&self, b: &ID2D1Bitmap, r: Rect, opacity: f32) {
         unsafe {
-            self.rt.DrawBitmap(b, Some(&r.d2d()), opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+            match &self.dc {
+                Some(dc) => dc.DrawBitmap(b, Some(&r.d2d()), opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, None, None),
+                None => self.rt.DrawBitmap(b, Some(&r.d2d()), opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None),
+            }
         }
     }
 
@@ -886,7 +891,7 @@ impl Canvas {
                 contentBounds: r.d2d(),
                 geometricMask: std::mem::ManuallyDrop::new(Some(geo.cast().unwrap())),
                 maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                maskTransform: Default::default(),
+                maskTransform: Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: 0.0, M32: 0.0 },
                 opacity: 1.0,
                 opacityBrush: std::mem::ManuallyDrop::new(None),
                 layerOptions: D2D1_LAYER_OPTIONS_NONE,

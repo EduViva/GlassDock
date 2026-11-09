@@ -1,6 +1,7 @@
 // Janelas: a "placa de vidro" (desfoque nativo do DWM recortado por região)
 // e as janelas "layered" de conteúdo com alfa por pixel.
 use windows::core::*;
+use windows::core::Interface;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -76,23 +77,132 @@ pub fn create_layered(kind: u32, idx: usize, owner: Option<HWND>, activatable: b
     create(kind, idx, ex, WS_POPUP, owner, "GlassDock")
 }
 
-/// Placa de vidro: janela comum com desfoque do DWM e região arredondada.
+// ---------------------------------------------------------------------------
+// Placa de vidro
+//
+// Preferência: Windows.UI.Composition com o "host backdrop" (o mesmo fundo
+// desfocado do acrílico do sistema) num visual recortado por um retângulo
+// arredondado com antisserrilhado. A janela não tem superfície GDI
+// (WS_EX_NOREDIRECTIONBITMAP), então nada fora do recorte pode aparecer preto.
+// Se a composição não estiver disponível, cai para o desfoque antigo.
+// ---------------------------------------------------------------------------
+
+struct PlateVis {
+    _target: windows::UI::Composition::Desktop::DesktopWindowTarget,
+    sprite: windows::UI::Composition::SpriteVisual,
+    geom: windows::UI::Composition::CompositionRoundedRectangleGeometry,
+}
+
+struct Comp {
+    _dq: windows::System::DispatcherQueueController,
+    comp: windows::UI::Composition::Compositor,
+    plates: std::collections::HashMap<isize, PlateVis>,
+    failed: bool,
+}
+
+thread_local! {
+    static COMP: std::cell::RefCell<Option<Comp>> = const { std::cell::RefCell::new(None) };
+    static COMP_TRIED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn comp_init() -> Option<Comp> {
+    use windows::Win32::System::WinRT::*;
+    unsafe {
+        // carregado na hora: se a DLL não existir, só não usamos a composição
+        type CreateDq = unsafe extern "system" fn(DispatcherQueueOptions, *mut *mut core::ffi::c_void) -> HRESULT;
+        let lib = LoadLibraryW(w!("CoreMessaging.dll")).ok()?;
+        let f = GetProcAddress(lib, s!("CreateDispatcherQueueController"))?;
+        let f: CreateDq = std::mem::transmute(f);
+        let opts = DispatcherQueueOptions { dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32, threadType: DQTYPE_THREAD_CURRENT, apartmentType: DQTAT_COM_NONE };
+        let mut raw: *mut core::ffi::c_void = std::ptr::null_mut();
+        if f(opts, &mut raw).is_err() || raw.is_null() {
+            return None;
+        }
+        let dq = windows::System::DispatcherQueueController::from_raw(raw);
+        let comp = windows::UI::Composition::Compositor::new().ok()?;
+        Some(Comp { _dq: dq, comp, plates: Default::default(), failed: false })
+    }
+}
+
+/// O usuário desligou os efeitos de transparência do Windows?
+pub fn transparency_enabled() -> bool {
+    use windows::Win32::System::Registry::*;
+    unsafe {
+        let mut v: u32 = 1;
+        let mut sz = 4u32;
+        let k = wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+        let n = wide("EnableTransparency");
+        let r = RegGetValueW(HKEY_CURRENT_USER, pcw(&k), pcw(&n), RRF_RT_REG_DWORD, None, Some(&mut v as *mut _ as _), Some(&mut sz));
+        !(r.is_ok() && v == 0)
+    }
+}
+
+fn comp_attach(h: HWND) -> bool {
+    use windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop;
+    if !COMP_TRIED.with(|t| t.replace(true)) {
+        let c = comp_init();
+        COMP.with(|x| *x.borrow_mut() = c);
+    }
+    COMP.with(|x| {
+        let mut b = x.borrow_mut();
+        let Some(c) = b.as_mut() else { return false };
+        if c.failed {
+            return false;
+        }
+        let r = (|| -> windows::core::Result<PlateVis> {
+            let interop: ICompositorDesktopInterop = c.comp.cast()?;
+            let target = unsafe { interop.CreateDesktopWindowTarget(h, false)? };
+            let sprite = c.comp.CreateSpriteVisual()?;
+            if transparency_enabled() {
+                unsafe {
+                    let on: i32 = 1;
+                    // DWMWA_USE_HOSTBACKDROPBRUSH = 17
+                    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(17), &on as *const _ as _, 4);
+                }
+                let brush = c.comp.CreateHostBackdropBrush()?;
+                sprite.SetBrush(&brush)?;
+            } else {
+                // sem transparência no sistema: vidro sólido (nunca preto puro)
+                let col = if system_dark() { windows::UI::Color { A: 255, R: 44, G: 44, B: 50 } } else { windows::UI::Color { A: 255, R: 236, G: 236, B: 242 } };
+                let brush = c.comp.CreateColorBrushWithColor(col)?;
+                sprite.SetBrush(&brush)?;
+            }
+            let geom = c.comp.CreateRoundedRectangleGeometry()?;
+            let clip = c.comp.CreateGeometricClipWithGeometry(&geom)?;
+            sprite.SetClip(&clip)?;
+            target.SetRoot(&sprite)?;
+            Ok(PlateVis { _target: target, sprite, geom })
+        })();
+        match r {
+            Ok(pv) => {
+                c.plates.insert(h.0 as isize, pv);
+                true
+            }
+            Err(_) => {
+                c.failed = true;
+                false
+            }
+        }
+    })
+}
+
+/// Placa de vidro atrás de uma janela de conteúdo.
 pub fn create_plate(kind: u32, idx: usize, owner: Option<HWND>) -> HWND {
-    let h = create(kind, idx, WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, WS_POPUP, owner, "GlassDockPlate");
-    enable_blur(h);
+    let h = create(kind, idx, WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP, WS_POPUP, owner, "GlassDockPlate");
     unsafe {
         let pref = DWMWCP_DONOTROUND;
-        let _ = DwmSetWindowAttribute(
-            h,
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            &pref as *const _ as _,
-            std::mem::size_of_val(&pref) as u32,
-        );
+        let _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &pref as *const _ as _, std::mem::size_of_val(&pref) as u32);
         let policy = DWMNCRP_DISABLED;
         let _ = DwmSetWindowAttribute(h, DWMWA_NCRENDERING_POLICY, &policy as *const _ as _, 4);
-        // A placa nunca aparece em Alt+Tab nem em capturas de "peek".
         let excluded: i32 = 1;
         let _ = DwmSetWindowAttribute(h, DWMWA_EXCLUDED_FROM_PEEK, &excluded as *const _ as _, 4);
+    }
+    if !comp_attach(h) {
+        // sem composição: janela comum com o desfoque antigo e região
+        destroy(h);
+        let h2 = create(kind, idx, WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, WS_POPUP, owner, "GlassDockPlate");
+        enable_blur(h2);
+        return h2;
     }
     h
 }
@@ -126,15 +236,27 @@ pub fn enable_blur(h: HWND) {
     }
 }
 
-/// Posiciona a placa (coordenadas de tela, pixels) e recorta com cantos arredondados.
+/// Posiciona a placa (coordenadas de tela, pixels) com cantos arredondados.
 pub fn place_plate(h: HWND, x: i32, y: i32, w: i32, hgt: i32, radius: i32, insert_after: Option<HWND>) {
     unsafe {
         let w = w.max(1);
         let hgt = hgt.max(1);
-        let rgn = CreateRoundRectRgn(0, 0, w + 1, hgt + 1, radius * 2, radius * 2);
         let flags = SWP_NOACTIVATE | if insert_after.is_none() { SWP_NOZORDER } else { SET_WINDOW_POS_FLAGS(0) };
         let _ = SetWindowPos(h, insert_after, x, y, w, hgt, flags);
-        SetWindowRgn(h, Some(rgn), true);
+        let done = COMP.with(|x| {
+            let b = x.borrow();
+            let Some(pv) = b.as_ref().and_then(|c| c.plates.get(&(h.0 as isize))) else { return false };
+            let size = windows_numerics::Vector2 { X: w as f32, Y: hgt as f32 };
+            let r = (radius as f32).min(w as f32 / 2.0).min(hgt as f32 / 2.0);
+            let _ = pv.sprite.SetSize(size);
+            let _ = pv.geom.SetSize(size);
+            let _ = pv.geom.SetCornerRadius(windows_numerics::Vector2 { X: r, Y: r });
+            true
+        });
+        if !done {
+            let rgn = CreateRoundRectRgn(0, 0, w + 1, hgt + 1, radius * 2, radius * 2);
+            SetWindowRgn(h, Some(rgn), true);
+        }
     }
 }
 
@@ -149,6 +271,13 @@ pub fn is_visible(h: HWND) -> bool {
 }
 
 pub fn destroy(h: HWND) {
+    COMP.with(|x| {
+        if let Ok(mut b) = x.try_borrow_mut() {
+            if let Some(c) = b.as_mut() {
+                c.plates.remove(&(h.0 as isize));
+            }
+        }
+    });
     unsafe {
         if !h.0.is_null() {
             let _ = DestroyWindow(h);

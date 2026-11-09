@@ -52,6 +52,7 @@ const T_SHOW: usize = 11;
 const T_TOAST: usize = 12;
 const T_FOLLOW: usize = 13;
 const T_DUMP: usize = 20;
+const T_CLICK: usize = 21;
 
 static MAIN: AtomicIsize = AtomicIsize::new(0);
 
@@ -158,6 +159,7 @@ pub enum Act {
     Keys(Vec<u16>),
     TrayPin(String, bool),
     FileMenu(u32),
+    HideApp(String),
 }
 
 pub enum MItem {
@@ -215,6 +217,7 @@ pub struct App {
     media_started: bool,
     last_rebroadcast: u64,
     watchdog_started: bool,
+    pending_click: Option<(usize, usize, f32, f32, u32)>,
 }
 
 pub fn run() {
@@ -375,6 +378,7 @@ impl App {
             media_started: false,
             last_rebroadcast: 0,
             watchdog_started: false,
+            pending_click: None,
         }
     }
 
@@ -1059,6 +1063,18 @@ impl App {
                     T_PET => self.on_pet(),
                     T_PANEL => self.render_panel(),
                     T_TOAST => self.expire_toasts(),
+                    T_CLICK => {
+                        unsafe {
+                            let _ = KillTimer(Some(self.main), T_CLICK);
+                        }
+                        if let Some((i, s, fx, fy, wid)) = self.pending_click {
+                            let ok = self.docks.get(i).and_then(|d| d.slots.get(s)).map(|sl| sl.widget == wid).unwrap_or(false);
+                            if ok {
+                                self.click_slot(i, s, fx, fy);
+                            }
+                            self.pending_click = None;
+                        }
+                    }
                     T_DUMP => {
                         unsafe {
                             let _ = KillTimer(Some(self.main), T_DUMP);
@@ -1365,10 +1381,31 @@ impl App {
                 let (x, y) = lp_xy(lp);
                 let g = self.docks[i].geo(&self.cfg);
                 if let Some(s) = dock::slot_at(&self.docks[i], x, y, &g) {
-                    if self.docks[i].slots[s].kind == SlotKind::Tray {
-                        let key = self.docks[i].slots[s].key.clone();
+                    let sl = self.docks[i].slots[s].clone();
+                    if sl.kind == SlotKind::Tray {
                         let p = glass::cursor_pos();
-                        tray::click(&key, tray::Click::Double, p.x, p.y);
+                        tray::click(&sl.key, tray::Click::Double, p.x, p.y);
+                        return Some(LRESULT(0));
+                    }
+                    if let Some((pi, ps, _, _, wid)) = self.pending_click {
+                        if pi == i && ps == s && sl.widget == wid {
+                            unsafe {
+                                let _ = KillTimer(Some(self.main), T_CLICK);
+                            }
+                            self.pending_click = None;
+                            if let Some(w) = self.widgets.get_mut(&wid) {
+                                self.sh.current_widget = wid;
+                                w.on_double_click(&mut self.sh);
+                            }
+                            self.process_requests();
+                            self.render(i);
+                            return Some(LRESULT(0));
+                        }
+                    }
+                    // fora disso, vale como um clique comum
+                    self.docks[i].press = Some((s, x, y));
+                    unsafe {
+                        SetCapture(self.docks[i].hwnd);
                     }
                 }
                 Some(LRESULT(0))
@@ -1534,26 +1571,42 @@ impl App {
             }
             return;
         }
-        // nova posição: entre os itens fixados, pelo centro mais próximo
+        // nova posição: o item mais próximo de onde foi solto. Widgets podem
+        // ir para depois dos apps abertos (zona 1) ou da bandeja (zona 2).
         let d = &self.docks[i];
-        let mut target_item: Option<usize> = None;
-        let mut best = f32::MAX;
-        for s in d.slots.iter() {
-            if let Some(it) = s.item {
-                let (a, _) = d.unmap(g, s.rect.cx(), s.rect.cy());
-                let dist = (a - u).abs();
-                if dist < best {
-                    best = dist;
-                    target_item = Some(if u > a { it + 1 } else { it });
-                }
+        let is_widget = sl.kind == SlotKind::Widget;
+        let mut nearest: Option<(usize, f32)> = None;
+        for (k, s) in d.slots.iter().enumerate() {
+            if k == si || s.kind == SlotKind::Sep {
+                continue;
+            }
+            if !is_widget && s.zone != 0 {
+                continue;
+            }
+            let (a, _) = d.unmap(g, s.rect.cx(), s.rect.cy());
+            let dist = (a - u).abs();
+            if nearest.map(|n| dist < n.1).unwrap_or(true) {
+                nearest = Some((k, dist));
             }
         }
+        let (target_zone, target_item) = match nearest {
+            Some((k, _)) => {
+                let s = &d.slots[k];
+                let (a, _) = d.unmap(g, s.rect.cx(), s.rect.cy());
+                let z = if is_widget { s.zone } else { 0 };
+                (z, s.item.map(|it| if u > a { it + 1 } else { it }))
+            }
+            None => (0, None),
+        };
         let items = &mut self.cfg.workspaces[wsi].items;
         let target = target_item.unwrap_or(items.len()).min(items.len());
         match (sl.kind.clone(), sl.item) {
             (_, Some(from)) => {
                 if from < items.len() {
-                    let it = items.remove(from);
+                    let mut it = items.remove(from);
+                    if let DockItem::Widgets { zone, .. } = &mut it {
+                        *zone = target_zone;
+                    }
                     let t = if target > from { target - 1 } else { target };
                     items.insert(t.min(items.len()), it);
                     self.mark_save();
@@ -1598,6 +1651,16 @@ impl App {
                 let wid = sl.widget;
                 self.sh.current_widget = wid;
                 let units = sl.units;
+                let wants_dbl = self.widgets.get(&wid).map(|w| w.double_click()).unwrap_or(false);
+                if wants_dbl && self.pending_click.is_none() {
+                    // espera para ver se vem um segundo clique
+                    self.pending_click = Some((i, s, fx, fy, wid));
+                    unsafe {
+                        SetTimer(Some(self.main), T_CLICK, GetDoubleClickTime().clamp(150, 600), None);
+                    }
+                    return;
+                }
+                self.pending_click = None;
                 let r = if let Some(w) = self.widgets.get_mut(&wid) { w.on_click(fx, fy, units, &mut self.sh) } else { return };
                 if r == widgets::Click::Panel {
                     let anchor = self.slot_screen_rect(i, s);
@@ -1738,7 +1801,7 @@ impl App {
             match sl.kind {
                 SlotKind::Widget if sl.stack > 1 => {
                     if let (Some(wsi), Some(item)) = (self.cfg.ws_index(self.docks[i].ws), sl.item) {
-                        if let Some(DockItem::Widgets { ids, cur }) = self.cfg.workspaces[wsi].items.get_mut(item) {
+                        if let Some(DockItem::Widgets { ids, cur, .. }) = self.cfg.workspaces[wsi].items.get_mut(item) {
                             let n = ids.len();
                             *cur = if delta < 0.0 { (*cur + 1) % n } else { (*cur + n - 1) % n };
                             self.mark_save();
@@ -1811,6 +1874,19 @@ impl App {
                         items.push(mi("Encerrar", Act::Quit(self.wins.get(sl.wins[0]).map(|w| w.key.clone()).unwrap_or_default())));
                         let pids: Vec<u32> = sl.wins.iter().filter_map(|h| self.wins.get(*h).map(|w| w.pid)).collect();
                         items.push(mi("Forçar encerramento", Act::Kill(pids)));
+                        if sl.kind == SlotKind::Running {
+                            if let Some(w) = self.wins.get(sl.wins[0]) {
+                                let key = if !w.aumid.is_empty() && w.exe.to_lowercase().ends_with("applicationframehost.exe") {
+                                    w.aumid.to_lowercase()
+                                } else {
+                                    std::path::Path::new(&w.exe).file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()
+                                };
+                                if !key.is_empty() {
+                                    items.push(MItem::Sep);
+                                    items.push(mi("Não mostrar como aberto", Act::HideApp(key)));
+                                }
+                            }
+                        }
                     }
                 }
                 SlotKind::Widget => {
@@ -2085,12 +2161,13 @@ impl App {
             }
             Act::Unstack(item) => {
                 let items = &mut self.cfg.workspaces[wsi].items;
-                if let Some(DockItem::Widgets { ids, cur }) = items.get_mut(item) {
+                if let Some(DockItem::Widgets { ids, cur, zone }) = items.get_mut(item) {
                     if ids.len() > 1 {
                         let c = (*cur).min(ids.len() - 1);
                         let w = ids.remove(c);
                         *cur = 0;
-                        items.insert(item + 1, DockItem::Widgets { ids: vec![w], cur: 0 });
+                        let z = *zone;
+                        items.insert(item + 1, DockItem::Widgets { ids: vec![w], cur: 0, zone: z });
                     }
                 }
                 self.mark_save();
@@ -2098,10 +2175,10 @@ impl App {
             }
             Act::UnstackAll(item) => {
                 let items = &mut self.cfg.workspaces[wsi].items;
-                if let Some(DockItem::Widgets { ids, .. }) = items.get(item).cloned() {
+                if let Some(DockItem::Widgets { ids, zone, .. }) = items.get(item).cloned() {
                     items.remove(item);
                     for (k, w) in ids.iter().enumerate() {
-                        items.insert(item + k, DockItem::Widgets { ids: vec![*w], cur: 0 });
+                        items.insert(item + k, DockItem::Widgets { ids: vec![*w], cur: 0, zone });
                     }
                 }
                 self.mark_save();
@@ -2157,6 +2234,13 @@ impl App {
             }
             Act::TrayPin(key, on) => {
                 self.set_tray_pin(&key, on);
+            }
+            Act::HideApp(key) => {
+                if !self.cfg.hidden_apps.contains(&key) {
+                    self.cfg.hidden_apps.push(key);
+                }
+                self.mark_save();
+                self.rebuild_all();
             }
         }
     }
@@ -2651,9 +2735,7 @@ impl App {
                     winlist::activate(h);
                 }
             }
-            None => {
-                shell_open(&format!("shell:AppsFolder\\{}", app_id));
-            }
+            None => {}
         }
     }
 
@@ -2936,7 +3018,7 @@ impl App {
         let di = self.active_dock();
         let ws = self.docks.get(di).map(|d| d.ws).unwrap_or(1);
         if let Some(wsi) = self.cfg.ws_index(ws) {
-            self.cfg.workspaces[wsi].items.push(DockItem::Widgets { ids: vec![id], cur: 0 });
+            self.cfg.workspaces[wsi].items.push(DockItem::Widgets { ids: vec![id], cur: 0, zone: 0 });
         }
         self.mark_save();
         self.ensure_services();
@@ -2952,7 +3034,7 @@ impl App {
         self.cfg.widgets.retain(|w| w.id != id);
         for ws in self.cfg.workspaces.iter_mut() {
             for it in ws.items.iter_mut() {
-                if let DockItem::Widgets { ids, cur } = it {
+                if let DockItem::Widgets { ids, cur, .. } = it {
                     ids.retain(|x| *x != id);
                     if *cur >= ids.len() {
                         *cur = 0;
@@ -2972,10 +3054,10 @@ impl App {
         let items = &mut self.cfg.workspaces[wsi].items;
         let has = items.iter().any(|it| matches!(it, DockItem::Widgets { ids, .. } if ids.contains(&id)));
         if on && !has {
-            items.push(DockItem::Widgets { ids: vec![id], cur: 0 });
+            items.push(DockItem::Widgets { ids: vec![id], cur: 0, zone: 0 });
         } else if !on && has {
             for it in items.iter_mut() {
-                if let DockItem::Widgets { ids, cur } = it {
+                if let DockItem::Widgets { ids, cur, .. } = it {
                     ids.retain(|x| *x != id);
                     if *cur >= ids.len() {
                         *cur = 0;

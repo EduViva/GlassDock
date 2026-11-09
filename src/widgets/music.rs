@@ -29,8 +29,24 @@ impl Music {
 }
 
 fn placeholder_art(c: &Canvas, r: Rect, rad: f32) {
-    c.fill_rrect_grad(r, rad, 135.0, &[(0.0, Color::hex(0xFF5E7E)), (1.0, Color::hex(0xB13CFF))]);
-    c.glyph(0xEC4F, r, r.h * 0.42, WHITE.a(0.92));
+    // capa padrão: degradê com uma nota musical desenhada
+    c.fill_rrect_grad(r, rad, 135.0, &[(0.0, Color::hex(0xFF5E7E)), (0.55, Color::hex(0xC03CF0)), (1.0, Color::hex(0x6A3CFF))]);
+    let s = r.w.min(r.h);
+    let (cx, cy) = (r.cx(), r.cy());
+    let w = (s * 0.055).max(1.5);
+    let head = s * 0.095;
+    let x1 = cx - s * 0.14;
+    let x2 = cx + s * 0.16;
+    let top1 = cy - s * 0.24;
+    let top2 = cy - s * 0.30;
+    let y1 = cy + s * 0.16;
+    let y2 = cy + s * 0.10;
+    let col = Color(1.0, 1.0, 1.0, 0.95);
+    c.line(x1 + head * 0.9, y1, x1 + head * 0.9, top1, col, w);
+    c.line(x2 + head * 0.9, y2, x2 + head * 0.9, top2, col, w);
+    c.fill_poly(&[(x1 + head * 0.9 - w / 2.0, top1), (x2 + head * 0.9 + w / 2.0, top2), (x2 + head * 0.9 + w / 2.0, top2 + s * 0.09), (x1 + head * 0.9 - w / 2.0, top1 + s * 0.09)], col);
+    c.fill_ellipse(x1, y1, head * 1.05, head * 0.82, col);
+    c.fill_ellipse(x2, y2, head * 1.05, head * 0.82, col);
 }
 
 fn eq_bars(c: &Canvas, x: f32, y: f32, h: f32, col: Color) {
@@ -53,10 +69,18 @@ impl Widget for Music {
         let has = m.has_session && !m.title.is_empty();
         if !t.wide() {
             if has && self.c.art_on_icon && sh.media_art.is_some() {
+                t.c.fill_rrect(t.r, t.rad(), Color::rgba(22, 22, 26, 1.0));
                 t.c.bitmap_cover_rounded(sh.media_art.as_ref().unwrap(), t.r, t.rad(), 1.0);
+                if !m.playing {
+                    // pausado: um véu discreto, sem ícone
+                    t.c.fill_rrect(t.r, t.rad(), Color(0.0, 0.0, 0.0, 0.38));
+                }
                 t.c.stroke_rrect(t.r.inset(0.5), t.rad(), Color(1.0, 1.0, 1.0, 0.15), 1.0);
             } else {
                 placeholder_art(t.c, t.r, t.rad());
+                if has && !m.playing {
+                    t.c.fill_rrect(t.r, t.rad(), Color(0.0, 0.0, 0.0, 0.25));
+                }
             }
             if has && m.playing {
                 let d = t.s * 0.26;
@@ -109,25 +133,33 @@ impl Widget for Music {
                 return Click::Handled;
             }
         }
-        if sh.media.has_session && !sh.media.app_id.is_empty() {
-            sh.focus_app = Some(sh.media.app_id.clone());
-            return Click::Handled;
-        }
         Click::Panel
     }
+    fn double_click(&self) -> bool {
+        true
+    }
+    fn on_double_click(&mut self, sh: &mut Shared) {
+        sh.media_cmd(Cmd::PlayPause);
+    }
     fn menu(&self) -> Vec<(u32, String)> {
-        vec![(1, "Abrir painel".into()), (2, "Tocar/pausar".into()), (3, "Próxima".into()), (4, "Anterior".into())]
+        vec![(2, "Tocar/pausar".into()), (3, "Próxima".into()), (4, "Anterior".into()), (5, "Mostrar o player".into())]
     }
     fn on_menu(&mut self, idm: u32, sh: &mut Shared) {
         match idm {
             2 => sh.media_cmd(Cmd::PlayPause),
             3 => sh.media_cmd(Cmd::Next),
             4 => sh.media_cmd(Cmd::Prev),
+            5 => {
+                if !sh.media.app_id.is_empty() {
+                    sh.focus_app = Some(sh.media.app_id.clone());
+                }
+            }
             _ => {}
         }
     }
-    fn panel_size(&self, _sh: &Shared) -> (f32, f32) {
-        (320.0, 380.0)
+    fn panel_size(&self, sh: &Shared) -> (f32, f32) {
+        let has = sh.media.has_session && !sh.media.title.is_empty();
+        (320.0, if has { 420.0 } else { 350.0 })
     }
     fn panel_interval(&self, sh: &Shared) -> Option<u32> {
         if sh.media.playing {
@@ -180,6 +212,14 @@ impl Widget for Music {
         }
         if ui.icon_btn(id("next"), Rect::new(x0 + 2.0 * (bw + gap), r.y, bw, bw), 0xE893, 18.0, TXT) {
             sh.media_cmd(Cmd::Next);
+        }
+        if m.has_session && !m.app_id.is_empty() {
+            ui.gap(6.0);
+            let r = ui.row(30.0);
+            if ui.button_k(id("show"), r.centered(150.0 * ui.s, r.h), "Mostrar o player", Btn::Ghost) {
+                sh.focus_app = Some(m.app_id.clone());
+                sh.close_panel = true;
+            }
         }
     }
     fn settings(&mut self, ui: &mut Ui, sh: &mut Shared) {

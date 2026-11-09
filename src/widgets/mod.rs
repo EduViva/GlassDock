@@ -163,6 +163,11 @@ pub trait Widget {
     fn on_click(&mut self, _fx: f32, _fy: f32, _units: u32, _sh: &mut Shared) -> Click {
         Click::Panel
     }
+    /// O widget usa clique duplo (o clique simples espera um instante).
+    fn double_click(&self) -> bool {
+        false
+    }
+    fn on_double_click(&mut self, _sh: &mut Shared) {}
     fn panel_size(&self, _sh: &Shared) -> (f32, f32) {
         (300.0, 200.0)
     }
@@ -245,6 +250,7 @@ pub const CATALOG: &[CatalogEntry] = &[
     entry!("calendar", "Data + próximo evento", "A data de hoje e o próximo compromisso ao lado.", "Calendário", 3, 1, ""),
     entry!("calendar", "Data + agenda", "A data e a lista dos próximos compromissos.", "Calendário", 3, 2, ""),
     entry!("calendar", "Data", "Só a data de hoje. O clique mostra o mês e a agenda.", "Calendário", 1, 3, ""),
+    entry!("calendar", "Data + hora", "O calendário com a hora ao lado e o próximo compromisso embaixo: relógio e data num tile só.", "Calendário", 2, 1, r#"{"show_time":true}"#),
     entry!("tasks", "Lista de tarefas", "Anote, marque e limpe tarefas direto no painel.", "Notas e mídia", 2),
     entry!("note", "Post-it", "Um recado que fica na dock.", "Notas e mídia", 2),
     entry!("music", "Tocando agora", "O que está tocando, com capa e controles. Spotify, navegador ou qualquer player.", "Notas e mídia", 3),

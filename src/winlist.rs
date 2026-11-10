@@ -29,6 +29,8 @@ pub struct Win {
     pub last_active: u64,
     pub monitor: isize,
     pub flashing: bool,
+    /// quando o app viu esta janela pela primeira vez (ms)
+    pub seen: u64,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -54,15 +56,91 @@ pub fn group_key(exe: &str, aumid: &str) -> String {
     }
 }
 
+fn file_name_lower(p: &str) -> String {
+    std::path::Path::new(p).file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+fn parent_lower(p: &str) -> String {
+    std::path::Path::new(p).parent().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+/// Só letras e números, minúsculo: "Google Chrome" == "googlechrome".
+pub fn norm(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+}
+
+fn is_updater(exe: &str) -> bool {
+    file_name_lower(exe) == "update.exe"
+}
+
+/// Apps que abrem por um atualizador (Figma, Discord, Slack…): o atalho aponta
+/// para `Update.exe --processStart App.exe`, mas a janela é de `App.exe`.
+fn process_start_name(app: &PinnedApp) -> Option<String> {
+    let a = app.lnk_args.to_lowercase();
+    let i = a.find("--processstart")?;
+    let rest = a[i..].split_whitespace().nth(1)?;
+    Some(rest.trim_matches('"').to_string())
+}
+
+fn is_frame_host(w: &Win) -> bool {
+    w.exe.to_lowercase().ends_with("applicationframehost.exe")
+}
+
+/// A janela é deste app fixado (critérios seguros).
 pub fn app_matches(app: &PinnedApp, w: &Win) -> bool {
     if !app.aumid.is_empty() && !w.aumid.is_empty() && app.aumid.eq_ignore_ascii_case(&w.aumid) {
         return true;
     }
+    // Apps hospedados no ApplicationFrameHost não casam pelo exe.
+    if is_frame_host(w) || w.exe.is_empty() {
+        return false;
+    }
+    let we = w.exe.to_lowercase();
     if !app.exe.is_empty() && app.exe.eq_ignore_ascii_case(&w.exe) {
-        // Apps hospedados no ApplicationFrameHost não casam pelo exe.
-        return !w.exe.to_lowercase().ends_with("applicationframehost.exe");
+        return true;
+    }
+    // aprendido ao abrir: o caminho exato, ou o mesmo nome de arquivo (o app
+    // pode ter se atualizado para uma pasta nova, como app-1.2.3 → app-1.2.4)
+    if app.alt.iter().any(|a| *a == we) {
+        return true;
+    }
+    let wn = file_name_lower(&w.exe);
+    if app.alt.iter().any(|a| file_name_lower(a) == wn) {
+        return true;
+    }
+    if !app.exe.is_empty() && is_updater(&app.exe) {
+        if let Some(name) = process_start_name(app) {
+            if file_name_lower(&w.exe) == name {
+                return true;
+            }
+        }
+        // a janela vive dentro da pasta do app (…\Figma\app-1.2.3\Figma.exe)
+        let dir = parent_lower(&app.exe);
+        if dir.len() > 8 && we.starts_with(&format!("{}\\", dir)) {
+            return true;
+        }
     }
     false
+}
+
+/// Critérios mais soltos, usados só para fixados que ficaram sem janela:
+/// mesmo nome de arquivo em outra pasta, ou o mesmo nome do app.
+pub fn app_matches_loose(app: &PinnedApp, w: &Win) -> bool {
+    if is_frame_host(w) || w.exe.is_empty() {
+        return false;
+    }
+    if !app.exe.is_empty() && !is_updater(&app.exe) && file_name_lower(&app.exe) == file_name_lower(&w.exe) {
+        return true;
+    }
+    let n = norm(&app.name);
+    if n.len() < 3 {
+        return false;
+    }
+    if n == norm(&file_stem(&w.exe)) {
+        return true;
+    }
+    let disp = crate::icons::app_display_name(&w.exe, &w.aumid);
+    n == norm(&disp)
 }
 
 fn saved_path() -> std::path::PathBuf {
@@ -233,6 +311,7 @@ impl WinList {
                 last_active: tick_ms().saturating_sub(order),
                 monitor: mon,
                 flashing: false,
+                seen: tick_ms(),
             });
             changed = true;
         }
@@ -409,13 +488,19 @@ pub fn launch(app: &PinnedApp, new_window_hint: bool) {
     unsafe {
         let _ = AllowSetForegroundWindow(ASFW_ANY);
     }
+    let name = app.name.clone();
     std::thread::spawn(move || unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        if args.is_empty() {
-            shell_open(&target);
-        } else {
-            shell_exec(&target, Some(&args), None);
-        }
+        let ok = if args.is_empty() { shell_exec_blocking(&target, None, None) } else { shell_exec_blocking(&target, Some(&args), None) };
         CoUninitialize();
+        if !ok {
+            if let Ok(mut q) = LAUNCH_FAILS.lock() {
+                q.push(name);
+            }
+            crate::app::post(crate::app::WM_APP_LAUNCHFAIL, 0, 0);
+        }
     });
 }
+
+/// Apps que o Windows não conseguiu abrir (a thread principal mostra o aviso).
+pub static LAUNCH_FAILS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());

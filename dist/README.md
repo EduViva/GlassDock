@@ -16,7 +16,7 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 ## O que tem
 
 **Dock**
-- Vidro com desfoque do Windows (composição, acrílico ou desfoque clássico) ou transparente sem desfoque; borda clara, brilho e sombra
+- Vidro transparente (65% de opacidade) por padrão; dá para trocar por acrílico, composição ou desfoque clássico em Ajustes › Aparência. Borda clara, brilho e sombra
 - Ampliação dos ícones estilo Mac (ou só escala, ou nada), nome do app ao passar o mouse
 - Fundo (placa) nos ícones: só nos não quadrados, em todos (inclusive pastas e Downloads) ou em nenhum, com a cor que você escolher
 - Os itens das pontas acompanham a curva da barra
@@ -37,9 +37,10 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Vários monitores: a dock segue o ponteiro, ou uma dock por monitor
 - Ctrl+Alt+D leva o foco para a dock (setas, Enter, Esc)
 
-**Status e bandeja** em linha, em grade (duas linhas) ou compacto
-- Rede, volume (a roda do mouse muda o volume) e bateria; um clique abre as Configurações rápidas
-- Ícones da bandeja dos outros apps (Discord, OneDrive…): os fixados ficam em linha e o resto vai para a setinha. O clique e o botão direito vão para o próprio app.
+**Status e bandeja** em linha ou em grade (duas linhas, metade do espaço)
+- Rede, volume (a roda do mouse muda o volume) e bateria; um clique abre as Configurações rápidas. A seta, a rede, o volume e a bateria podem ser tirados um a um em Ajustes › Barra e bandeja (menos itens, menos largura).
+- Ícones da bandeja dos outros apps (Discord, Lightshot…): fixe os que quiser pelo alfinete no canto do ícone; o resto fica na setinha (ou em botão direito na barra › Ícones da bandeja…, se a seta estiver escondida). O clique e o botão direito vão para o próprio app e fecham o painel.
+- Apps fixados que abrem por um atualizador (Figma, Discord, Slack…) ou mudam de pasta ao atualizar são reconhecidos: o app aprende a janela na primeira abertura pela dock.
 - Relógio com data no formato regional; o clique abre o calendário
 
 **Workspaces (ambientes)**

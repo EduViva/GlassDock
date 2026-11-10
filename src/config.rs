@@ -15,6 +15,13 @@ pub struct PinnedApp {
     pub exe: String,
     /// AppUserModelID (apps da Store e apps com ID explícito)
     pub aumid: String,
+    /// Argumentos do atalho (.lnk) de origem, só para reconhecer a janela
+    /// (ex.: `--processStart Figma.exe` dos apps que abrem por um Update.exe)
+    pub lnk_args: String,
+    /// Executáveis das janelas que este app já abriu (aprendido ao abrir)
+    pub alt: Vec<String>,
+    /// o atalho já foi lido nesta versão
+    pub resolved: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -141,6 +148,11 @@ pub struct General {
     pub show_date: bool,
     pub clock_align: u32,
     pub show_status: bool,
+    /// itens de status individuais (dentro de "ícones de status")
+    pub show_chevron: bool,
+    pub show_net: bool,
+    pub show_vol: bool,
+    pub show_bat: bool,
     pub wheel_switches_ws: bool,
     pub ws_hotkeys: bool,
     pub focus_hotkey: bool,
@@ -174,6 +186,10 @@ impl Default for General {
             show_date: true,
             clock_align: 2,
             show_status: true,
+            show_chevron: true,
+            show_net: true,
+            show_vol: true,
+            show_bat: true,
             wheel_switches_ws: true,
             ws_hotkeys: true,
             focus_hotkey: true,
@@ -217,9 +233,9 @@ impl Default for Appearance {
             indicator_ws_color: false,
             plates: true,
             tint: Tint::Dark,
-            opacity: 0.52,
+            opacity: 0.65,
             labels: true,
-            glass_mode: 1,
+            glass_mode: 3,
             plate_all: false,
             plate_color: "#FFFFFF".into(),
         }

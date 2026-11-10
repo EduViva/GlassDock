@@ -334,6 +334,48 @@ pub fn shell_exec(target: &str, args: Option<&str>, dir: Option<&str>) -> bool {
     }
 }
 
+/// ShellExecuteEx que só volta quando o Windows terminou de iniciar o app.
+/// Feito para rodar numa thread própria (uma chamada assíncrona seria
+/// cortada quando a thread termina, e o app demoraria ou nem abriria).
+pub fn shell_exec_blocking(target: &str, args: Option<&str>, dir: Option<&str>) -> bool {
+    unsafe {
+        let t = wide(target);
+        let a = args.map(wide);
+        let d = dir.map(wide);
+        let open = wide("open");
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOCLOSEPROCESS,
+            lpVerb: pcw(&open),
+            lpFile: pcw(&t),
+            lpParameters: a.as_ref().map(|v| pcw(v)).unwrap_or(PCWSTR::null()),
+            lpDirectory: d.as_ref().map(|v| pcw(v)).unwrap_or(PCWSTR::null()),
+            nShow: windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0,
+            ..Default::default()
+        };
+        let ok = ShellExecuteExW(&mut info).is_ok();
+        if !info.hProcess.is_invalid() {
+            let _ = CloseHandle(info.hProcess);
+        }
+        ok
+    }
+}
+
+/// Há quantos segundos o processo foi criado.
+pub fn process_age_secs(pid: u32) -> Option<f64> {
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let (mut c, mut e, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        let r = GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u);
+        let _ = CloseHandle(h);
+        r.ok()?;
+        let created = ((c.dwHighDateTime as u64) << 32) | c.dwLowDateTime as u64;
+        let now = GetSystemTimeAsFileTime();
+        let now = ((now.dwHighDateTime as u64) << 32) | now.dwLowDateTime as u64;
+        Some(now.saturating_sub(created) as f64 / 1e7)
+    }
+}
+
 pub fn show_in_explorer(path: &str) {
     let arg = format!("/select,\"{}\"", path);
     shell_exec("explorer.exe", Some(&arg), None);

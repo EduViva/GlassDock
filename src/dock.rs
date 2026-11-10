@@ -132,6 +132,9 @@ pub struct Dock {
     pub appbar: bool,
     pub tracking: bool,
     pub bounce: HashMap<String, u64>,
+    /// apps abertos pelo clique que ainda não mostraram janela
+    pub launching: HashMap<String, u64>,
+    pub anim_last: u64,
     pub drop_hover: Option<usize>,
     pub hover_since: u64,
     pub s: f32,
@@ -201,6 +204,8 @@ impl Dock {
             appbar: false,
             tracking: false,
             bounce: HashMap::new(),
+            launching: HashMap::new(),
+            anim_last: 0,
             drop_hover: None,
             hover_since: 0,
             s: 46.0,
@@ -397,6 +402,32 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
         s.mag = false;
         slots.push(s);
     }
+    // Quais janelas pertencem a quais apps fixados: primeiro pelos critérios
+    // seguros, depois (só para os que ficaram sem janela) pelos mais soltos.
+    let mut assigned: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (i, it) in ws.items.iter().enumerate() {
+        if let DockItem::App(app) = it {
+            for (k, w) in running.iter().enumerate() {
+                if !used[k] && winlist::app_matches(app, w) {
+                    used[k] = true;
+                    assigned.entry(i).or_default().push(k);
+                }
+            }
+        }
+    }
+    for (i, it) in ws.items.iter().enumerate() {
+        if let DockItem::App(app) = it {
+            if assigned.contains_key(&i) {
+                continue;
+            }
+            for (k, w) in running.iter().enumerate() {
+                if !used[k] && winlist::app_matches_loose(app, w) {
+                    used[k] = true;
+                    assigned.entry(i).or_default().push(k);
+                }
+            }
+        }
+    }
     let mut zone1: Vec<Slot> = vec![];
     let mut zone2: Vec<Slot> = vec![];
     // modo livre: fixados, abertos e espaçadores formam um grupo só
@@ -419,13 +450,11 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
                 s.name = app.name.clone();
                 s.icon = icons::icon_path(app);
                 s.key = format!("pin:{}", app.launch.to_lowercase());
-                for (k, w) in running.iter().enumerate() {
-                    if !used[k] && winlist::app_matches(app, w) {
-                        used[k] = true;
-                        s.wins.push(w.hwnd);
-                        s.active |= w.hwnd == fg;
-                        s.flashing |= w.flashing;
-                    }
+                for &k in assigned.get(&i).map(|v| v.as_slice()).unwrap_or(&[]) {
+                    let w = running[k];
+                    s.wins.push(w.hwnd);
+                    s.active |= w.hwnd == fg;
+                    s.flashing |= w.flashing;
                 }
                 if mixed {
                     if block_pos.is_none() {
@@ -580,36 +609,36 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
     if cfg.general.show_status {
         let pinned = &cfg.tray_pinned;
         let icons_now = tray::visible_icons();
-        let mut any_hidden = false;
         for ic in &icons_now {
             let exe = ic.key.split('|').next().unwrap_or("");
-            let layout = cfg.general.status_layout;
-            if layout != 2 && pinned.iter().any(|p| p == &ic.key || *p == format!("{}|*", exe)) {
+            if pinned.iter().any(|p| p == &ic.key || *p == format!("{}|*", exe)) {
                 let mut s = Slot::new(SlotKind::Tray, if vertical { 0.6 } else { 0.5 });
                 s.key = ic.key.clone();
                 s.name = ic.tip.clone();
                 s.mag = false;
                 s.small = true;
                 status.push(s);
-            } else {
-                any_hidden = true;
             }
         }
-        if any_hidden || !icons_now.is_empty() {
+        // a setinha dos ícones ocultos (pode ser escondida; o menu da barra a abre)
+        if cfg.general.show_chevron && !icons_now.is_empty() {
             let mut s = Slot::new(SlotKind::Chevron, 0.4);
             s.mag = false;
             s.small = true;
             s.name = "Mostrar ícones ocultos".into();
             status.insert(0, s);
         }
-        for (k, name) in [(SlotKind::Net, "Rede"), (SlotKind::Vol, "Volume")] {
+        for (k, name, on) in [(SlotKind::Net, "Rede", cfg.general.show_net), (SlotKind::Vol, "Volume", cfg.general.show_vol)] {
+            if !on {
+                continue;
+            }
             let mut s = Slot::new(k, 0.5);
             s.mag = false;
             s.small = true;
             s.name = name.into();
             status.push(s);
         }
-        if sh.status.battery.present {
+        if sh.status.battery.present && cfg.general.show_bat {
             let mut s = Slot::new(SlotKind::Bat, 0.5);
             s.mag = false;
             s.small = true;
@@ -794,7 +823,11 @@ pub fn layout(d: &mut Dock, cfg: &Config, g: &Geo) {
         };
         let mut r = d.map_rect(g, draw_u, draw_len, v0, cross);
         if let Some(t0) = d.bounce.get(&d.slots[i].key) {
-            let t = (tick_ms().saturating_sub(*t0)) as f32 / 1000.0;
+            let mut t = (tick_ms().saturating_sub(*t0)) as f32 / 1000.0;
+            if d.launching.contains_key(&d.slots[i].key) {
+                // pula em laço até a janela aparecer
+                t %= 1.65;
+            }
             let off = bounce_offset(cfg.appearance.launch_anim, t, s);
             let (dx, dy) = match g.pos {
                 DockPos::Bottom => (0.0, -off.1),
@@ -1002,6 +1035,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
     let (w, h) = (wr.right - wr.left, wr.bottom - wr.top);
     let ws_color = cfg.ws_index(d.ws).map(|i| Color::hex(WS_COLORS[cfg.workspaces[i].color as usize % 6].0)).unwrap_or(ACCENT);
     let hover = d.hover;
+    let launching: Vec<String> = d.launching.keys().cloned().collect();
     let dragging = d.drag.as_ref().map(|x| (x.slot, x.u, x.v, x.out, x.resize));
     let drop_hover = d.drop_hover;
     let kb = d.kb_focus;
@@ -1129,8 +1163,17 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                     let ic = slot_icon(ctx_sh, sl, g.s * cfg.appearance.magnify.max(1.0));
                     c.shadow(r.inset(r.w * 0.08), r.w * 0.2, 5.0 * g.sc, 4.0 * g.sc, Color(0.04, 0.05, 0.12, 0.22));
                     draw_app_icon(c, ic.as_ref(), r, plate, th.dark, &sl.name);
+                    let ind_col = if cfg.appearance.indicator_ws_color { ws_color } else { th.glyph };
                     if !sl.wins.is_empty() {
-                        draw_indicator(c, cfg, &g, d_pos(pos), r, sl, if cfg.appearance.indicator_ws_color { ws_color } else { th.glyph }, &bar);
+                        draw_indicator(c, cfg, &g, d_pos(pos), r, sl, ind_col, &bar);
+                    } else if launching.contains(&sl.key) {
+                        // abrindo: o indicador pulsa até a janela aparecer
+                        let ph = (tick_ms() % 1100) as f32 / 1100.0;
+                        let a = 0.3 + 0.7 * (ph * std::f32::consts::PI).sin().abs();
+                        let mut tmp = sl.clone();
+                        tmp.active = false;
+                        tmp.wins = vec![HWND::default()];
+                        draw_indicator(c, cfg, &g, d_pos(pos), r, &tmp, ind_col.a(a), &bar);
                     }
                 }
                 SlotKind::Widget => {

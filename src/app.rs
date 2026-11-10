@@ -37,6 +37,7 @@ pub const WM_APP_FG: u32 = WM_APP + 6;
 pub const WM_APP_TASKBAR: u32 = WM_APP + 7;
 pub const WM_APP_APPBAR: u32 = WM_APP + 8;
 pub const WM_APP_SHOW_SETTINGS: u32 = WM_APP + 9;
+pub const WM_APP_LAUNCHFAIL: u32 = WM_APP + 10;
 
 const T_ANIM: usize = 1;
 const T_TICK: usize = 2;
@@ -162,6 +163,7 @@ pub enum Act {
     TrayPin(String, bool),
     FileMenu(u32),
     HideApp(String),
+    TrayPanel,
 }
 
 pub enum MItem {
@@ -201,7 +203,7 @@ pub struct App {
     hooks: Vec<HWINEVENTHOOK>,
     due: HashMap<u32, u64>,
     pub trash_full: bool,
-    pending_launch: Option<(String, u64, u32)>,
+    pending_launch: Option<PendingLaunch>,
     preview_pending: Option<(usize, usize)>,
     watch_ids: Vec<u32>,
     hotkeys: Vec<i32>,
@@ -220,6 +222,18 @@ pub struct App {
     last_rebroadcast: u64,
     watchdog_started: bool,
     pending_click: Option<(usize, usize, f32, f32, u32)>,
+}
+
+/// Um app fixado que acabou de ser aberto pelo clique.
+#[derive(Clone)]
+pub struct PendingLaunch {
+    /// chave usada para reconhecer janelas novas (AUMID ou nome do exe)
+    pub k: String,
+    pub t: u64,
+    pub ws: u32,
+    /// `launch` do app fixado (para guardar o que for aprendido)
+    pub launch: String,
+    pub pinned: bool,
 }
 
 pub fn run() {
@@ -354,6 +368,33 @@ impl App {
             }
         }
         sh.ics.urls = cfg.calendars.clone();
+        // apps fixados de versões antigas: lê os argumentos do atalho (uma vez)
+        let mut resolved_any = false;
+        for ws in cfg.workspaces.iter_mut() {
+            for it in ws.items.iter_mut() {
+                if let DockItem::App(a) = it {
+                    if a.resolved {
+                        continue;
+                    }
+                    a.resolved = true;
+                    resolved_any = true;
+                    if a.launch.to_lowercase().ends_with(".lnk") && std::path::Path::new(&a.launch).exists() {
+                        if let Some((target, args, aumid)) = icons::resolve_lnk(&a.launch) {
+                            a.lnk_args = args;
+                            if a.exe.is_empty() {
+                                a.exe = target;
+                            }
+                            if a.aumid.is_empty() {
+                                a.aumid = aumid;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if resolved_any {
+            cfg.save();
+        }
         let mut widgets: BTreeMap<u32, Box<dyn Widget>> = BTreeMap::new();
         for wi in &cfg.widgets {
             widgets.insert(wi.id, widgets::make(&wi.kind, &wi.data));
@@ -782,8 +823,18 @@ impl App {
             }
             let now = tick_ms();
             let before = d.bounce.len();
-            d.bounce.retain(|_, t| now.saturating_sub(*t) < 1700);
+            // abrindo: a animação só para quando a janela aparece (ou após 30 s)
+            let slots = &d.slots;
+            d.launching.retain(|k, t| now.saturating_sub(*t) < 30_000 && !slots.iter().any(|s| s.key == *k && !s.wins.is_empty()));
+            let launching = &d.launching;
+            d.bounce.retain(|k, t| now.saturating_sub(*t) < 1700 || launching.contains_key(k));
             if !d.bounce.is_empty() || before != d.bounce.len() {
+                // quadros a ~30 por segundo bastam
+                if !d.launching.is_empty() && d.bounce.len() == d.launching.len() && !moved && now.saturating_sub(d.anim_last) < 30 {
+                    any = true;
+                    continue;
+                }
+                d.anim_last = now;
                 moved = true;
             }
             if moved {
@@ -832,11 +883,56 @@ impl App {
                 }
             }
             self.rebuild_all();
+            self.learn_launch();
             if self.wins.dirty_save {
                 unsafe {
                     SetTimer(Some(self.main), T_SAVE, 2000, None);
                 }
             }
+        }
+    }
+
+    /// Depois de abrir um app fixado: se uma janela nova apareceu e não foi
+    /// reconhecida como dele (ex.: o atalho aponta para um atualizador),
+    /// guarda o executável dela para reconhecer da próxima vez.
+    fn learn_launch(&mut self) {
+        let Some(p) = self.pending_launch.clone() else { return };
+        if tick_ms().saturating_sub(p.t) > 60_000 {
+            self.pending_launch = None;
+            return;
+        }
+        if !p.pinned {
+            return;
+        }
+        let key = format!("pin:{}", p.launch.to_lowercase());
+        let have_wins = self.docks.iter().any(|d| d.slots.iter().any(|s| s.key == key && !s.wins.is_empty()));
+        if have_wins {
+            self.pending_launch = None;
+            return;
+        }
+        // janelas novas que ficaram como "abertos soltos"
+        let loose: Vec<HWND> = self.docks.iter().flat_map(|d| d.slots.iter()).filter(|s| s.kind == SlotKind::Running).flat_map(|s| s.wins.iter().copied()).collect();
+        let waited = tick_ms().saturating_sub(p.t) as f64 / 1000.0;
+        let found = self.wins.wins.iter().find(|w| {
+            loose.contains(&w.hwnd) && w.seen + 300 >= p.t && !w.exe.is_empty() && process_age_secs(w.pid).map(|a| a <= waited + 3.0).unwrap_or(false)
+        });
+        let Some(w) = found.cloned() else { return };
+        let exe = w.exe.to_lowercase();
+        let mut learned = false;
+        for ws in self.cfg.workspaces.iter_mut() {
+            for it in ws.items.iter_mut() {
+                if let DockItem::App(a) = it {
+                    if a.launch == p.launch && !a.alt.contains(&exe) {
+                        a.alt.push(exe.clone());
+                        learned = true;
+                    }
+                }
+            }
+        }
+        self.pending_launch = None;
+        if learned {
+            self.mark_save();
+            self.rebuild_all();
         }
     }
 
@@ -863,7 +959,7 @@ impl App {
             if let Some(di) = di {
                 let cur = self.docks[di].ws;
                 if w.ws != cur && self.cfg.general.only_current_ws && tick_ms() > self.wins.switching_until {
-                    let launched = self.pending_launch.as_ref().map(|(k, t, _)| tick_ms().saturating_sub(*t) < 5000 && (w.key == *k || w.exe.to_lowercase().contains(&k.to_lowercase()))).unwrap_or(false);
+                    let launched = self.pending_launch.as_ref().map(|p| tick_ms().saturating_sub(p.t) < 30_000 && (w.key == p.k || w.exe.to_lowercase().contains(&p.k.to_lowercase()) || w.seen >= p.t.saturating_sub(300))).unwrap_or(false);
                     if launched {
                         if let Some(wm) = self.wins.get_mut(h) {
                             wm.ws = cur;
@@ -1181,6 +1277,16 @@ impl App {
             }
             WM_APP_TASKBAR => {
                 self.taskbar.hide_now();
+                Some(LRESULT(0))
+            }
+            WM_APP_LAUNCHFAIL => {
+                let names: Vec<String> = winlist::LAUNCH_FAILS.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
+                for n in names {
+                    self.show_toast("Não consegui abrir", &n, false);
+                }
+                for d in self.docks.iter_mut() {
+                    d.launching.clear();
+                }
                 Some(LRESULT(0))
             }
             WM_APP_SHOW_SETTINGS => {
@@ -1684,6 +1790,7 @@ impl App {
                             args: String::new(),
                             exe: w.exe.clone(),
                             aumid: w.aumid.clone(),
+                            ..Default::default()
                         };
                         let pinned_count = items.iter().filter(|x| !matches!(x, DockItem::Widgets { .. })).count();
                         items.insert(target.min(pinned_count.max(target)), DockItem::App(app));
@@ -1692,6 +1799,16 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Onde abrir o painel da bandeja: perto dos ícones de status, ou da barra.
+    fn status_anchor(&self, i: usize) -> RECT {
+        let d = &self.docks[i.min(self.docks.len() - 1)];
+        let k = d.slots.iter().position(|s| matches!(s.kind, SlotKind::Chevron | SlotKind::Tray | SlotKind::Net | SlotKind::Vol | SlotKind::Bat | SlotKind::Clock));
+        match k {
+            Some(k) => self.slot_screen_rect(i.min(self.docks.len() - 1), k),
+            None => RECT { left: d.win.left + d.bar.x as i32, top: d.win.top + d.bar.y as i32, right: d.win.left + d.bar.r() as i32, bottom: d.win.top + d.bar.b() as i32 },
         }
     }
 
@@ -1779,11 +1896,13 @@ impl App {
         self.close_panel();
         if sl.wins.is_empty() {
             if let Some(app) = self.slot_app(i, s) {
+                // a animação continua até a janela aparecer (apps pesados demoram)
                 self.docks[i].bounce.insert(sl.key.clone(), tick_ms());
+                self.docks[i].launching.insert(sl.key.clone(), tick_ms());
                 self.render(i);
                 winlist::launch(&app, false);
                 let k = if !app.aumid.is_empty() { winlist::group_key("", &app.aumid) } else { file_stem(&app.exe) };
-                self.pending_launch = Some((k, tick_ms(), self.docks[i].ws));
+                self.pending_launch = Some(PendingLaunch { k, t: tick_ms(), ws: self.docks[i].ws, launch: app.launch.clone(), pinned: sl.kind == SlotKind::Pinned });
                 self.kick_anim();
             }
             return;
@@ -1826,6 +1945,7 @@ impl App {
                     args: String::new(),
                     exe: w.exe.clone(),
                     aumid: w.aumid.clone(),
+                    ..Default::default()
                 })
             }
             _ => None,
@@ -2041,6 +2161,7 @@ impl App {
                 SlotKind::Clock => {
                     items.push(mi("Ajustar data e hora", Act::Open("ms-settings:dateandtime".into())));
                     items.push(mi("Central de notificações", Act::Keys(vec![VK_LWIN.0, VK_N.0])));
+                    items.push(mi("Ícones da bandeja…", Act::TrayPanel));
                 }
                 SlotKind::Chevron => {
                     items.push(mi("Escolher ícones na barra…", Act::Settings));
@@ -2082,6 +2203,9 @@ impl App {
             sub.push(mi("Novo workspace…", Act::NewWs));
             items.push(MItem::Sub("Workspace".into(), sub));
             items.push(MItem::Sep);
+            if self.cfg.general.show_status {
+                items.push(mi("Ícones da bandeja…", Act::TrayPanel));
+            }
             items.push(mi("Widgets…", Act::Widgets));
             items.push(mi("Ajustes do Dock…", Act::Settings));
             items.push(MItem::Sep);
@@ -2266,6 +2390,10 @@ impl App {
                 items.insert(pos, DockItem::Spacer { large });
                 self.mark_save();
                 self.rebuild_all();
+            }
+            Act::TrayPanel => {
+                let anchor = self.status_anchor(di);
+                self.open_panel(PanelKind::Tray, di, anchor, "chevron".into());
             }
             Act::AddDivider => {
                 let items = &mut self.cfg.workspaces[wsi].items;
@@ -2551,7 +2679,7 @@ impl App {
         let r = ui.row(24.0);
         ui.c.text("Ícones da bandeja", r, 13.5 * ui.s, W_SEMIBOLD, TXT, Align::Left);
         let r2 = ui.row(18.0);
-        ui.c.text("Clique para abrir · alfinete para fixar na dock", r2, 11.0 * ui.s, W_NORMAL, TXT2, Align::Left);
+        ui.c.text("Clique para abrir · alfinete (canto do ícone) para fixar na dock", r2, 11.0 * ui.s, W_NORMAL, TXT2, Align::Left);
         ui.gap(6.0);
         let icons_now = tray::visible_icons();
         let n = icons_now.len();
@@ -2579,22 +2707,31 @@ impl App {
             if let Some(b) = bmp {
                 ui.c.bitmap(&b.bmp, cell.centered(24.0 * ui.s, 24.0 * ui.s), 1.0);
             }
-            let pr = Rect::new(cell.r() - 18.0 * ui.s, cell.y + 2.0 * ui.s, 16.0 * ui.s, 16.0 * ui.s);
+            // alfinete: grande o bastante para acertar, e visível ao passar o mouse
+            let pr = Rect::new(cell.r() - 22.0 * ui.s, cell.y + 1.0 * ui.s, 20.0 * ui.s, 20.0 * ui.s);
+            let mut on_pin = false;
             if hov || pinned {
                 let (ph, pc) = ui.hit(idn("tp", k as u64), pr);
-                ui.c.glyph(if pinned { 0xE841 } else { 0xE718 }, pr, 10.0 * ui.s, if pinned { ACCENT } else if ph { TXT } else { TXT2 });
+                on_pin = ph;
+                if ph {
+                    ui.c.fill_circle(pr.cx(), pr.cy(), 10.0 * ui.s, FILL_HOVER);
+                }
+                ui.c.glyph(if pinned { 0xE841 } else { 0xE718 }, pr, 11.0 * ui.s, if pinned { ACCENT } else if ph { TXT } else { TXT2 });
                 if pc {
                     pin_toggle = Some((ic.key.clone(), !pinned));
                     continue;
                 }
             }
-            if clk && !pr.contains(ui.inp.mx, ui.inp.my) {
+            // clicar num ícone abre o app e fecha o painel
+            if clk && !on_pin {
                 let rp = self.panel.as_ref().map(|p| p.p.rect).unwrap_or(RECT::default());
                 tray::click(&ic.key, tray::Click::Left, rp.left + cell.cx() as i32, rp.top + cell.cy() as i32);
+                self.sh.close_panel = true;
             }
             if ui.right_clicked(cell) {
                 let rp = self.panel.as_ref().map(|p| p.p.rect).unwrap_or(RECT::default());
                 tray::click(&ic.key, tray::Click::Right, rp.left + cell.cx() as i32, rp.top + cell.cy() as i32);
+                self.sh.close_panel = true;
             }
             if hov && !ic.tip.is_empty() {
                 let tr = Rect::new(ui.area.x, ui.area.b() - 20.0 * ui.s, ui.area.w, 20.0 * ui.s);

@@ -735,13 +735,24 @@ fn page_edit_widget(app: &mut App, ui: &mut Ui, wid: u32, page: &mut Page) {
 }
 
 fn page_bar(app: &mut App, ui: &mut Ui) {
-    page_title(ui, "Barra e bandeja", "Rede, volume, bateria, os ícones dos apps e o relógio, em linha no fim da dock.");
+    page_title(ui, "Barra e bandeja", "Rede, volume, bateria, os ícones dos apps e o relógio, no fim da dock.");
     let g = &mut app.cfg.general;
     let mut ch = false;
     ch |= ui.row_toggle(id("st"), "Ícones de status e da bandeja", &mut g.show_status);
     if g.show_status {
-        ch |= ui.labeled_segmented(id("stl"), "Arrumação", &["Em linha", "Em grade", "Compacto"], &mut g.status_layout);
-        ui.note("Em grade: os ícones ficam em duas linhas e ocupam metade do espaço. Compacto: grade só com rede, volume e bateria; os ícones dos apps ficam na setinha.");
+        let mut lay = g.status_layout.min(1);
+        if ui.labeled_segmented(id("stl"), "Arrumação", &["Em linha", "Em grade"], &mut lay) {
+            g.status_layout = lay;
+            ch = true;
+        }
+        ui.note("Em grade, os ícones ficam em duas linhas e a barra ocupa metade do espaço. Cada item abaixo pode ser tirado: menos itens, menos largura.");
+        ch |= ui.row_toggle(id("sch"), "Seta dos ícones ocultos (^)", &mut g.show_chevron);
+        ch |= ui.row_toggle(id("snt"), "Rede", &mut g.show_net);
+        ch |= ui.row_toggle(id("svl"), "Volume", &mut g.show_vol);
+        ch |= ui.row_toggle(id("sbt"), "Bateria", &mut g.show_bat);
+        if !g.show_chevron {
+            ui.note("Sem a seta, os ícones ocultos abrem pelo botão direito na barra › Ícones da bandeja…");
+        }
     }
     ch |= ui.row_toggle(id("ck"), "Relógio", &mut g.show_clock);
     if g.show_clock {
@@ -752,7 +763,7 @@ fn page_bar(app: &mut App, ui: &mut Ui) {
         app.apply_general();
     }
     section(ui, "ÍCONES DA BANDEJA NA DOCK");
-    ui.note("Os fixados aparecem em linha na dock; os outros ficam na setinha. Clique com o botão direito num ícone para o menu do próprio app.");
+    ui.note("Os fixados aparecem na dock, junto da rede e do volume; os outros ficam na setinha. Em grade, cada dois ícones ocupam uma coluna. Clique com o botão direito num ícone para o menu do próprio app.");
     let icons_now = crate::tray::visible_icons();
     if icons_now.is_empty() {
         ui.note("Nenhum app com ícone na bandeja agora.");

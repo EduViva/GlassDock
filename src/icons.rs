@@ -156,6 +156,7 @@ impl CatalogApp {
             args: String::new(),
             exe,
             aumid,
+            ..Default::default()
         }
     }
 }
@@ -242,11 +243,11 @@ pub fn resolve_lnk(path: &str) -> Option<(String, String, String)> {
 pub fn pinned_from_path(path: &str) -> PinnedApp {
     let name = file_stem(path);
     if path.to_lowercase().ends_with(".lnk") {
-        if let Some((target, _args, aumid)) = resolve_lnk(path) {
-            return PinnedApp { name, launch: path.to_string(), args: String::new(), exe: target, aumid };
+        if let Some((target, args, aumid)) = resolve_lnk(path) {
+            return PinnedApp { name, launch: path.to_string(), args: String::new(), exe: target, aumid, lnk_args: args, resolved: true, ..Default::default() };
         }
     }
-    PinnedApp { name, launch: path.to_string(), args: String::new(), exe: path.to_string(), aumid: String::new() }
+    PinnedApp { name, launch: path.to_string(), args: String::new(), exe: path.to_string(), aumid: String::new(), resolved: true, ..Default::default() }
 }
 
 /// Fixados iniciais: os mesmos da barra de tarefas atual.
@@ -259,6 +260,7 @@ pub fn default_pins() -> Vec<PinnedApp> {
         args: String::new(),
         exe: format!("{}\\explorer.exe", win),
         aumid: "Microsoft.Windows.Explorer".into(),
+        ..Default::default()
     });
     let dir = std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
         .join("Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar");
@@ -290,6 +292,7 @@ pub fn default_pins() -> Vec<PinnedApp> {
                 args: String::new(),
                 exe: if aumid == "MSEdge" { edge_path() } else { String::new() },
                 aumid: aumid.into(),
+                ..Default::default()
             });
         }
     }

@@ -153,39 +153,65 @@ fn restore_from(st: &State) {
     }
 }
 
-/// Inicia o vigia: `GlassDock.exe --watchdog <pid>`
-pub fn spawn_watchdog() {
+fn spawn_self(args: &str, flags: PROCESS_CREATION_FLAGS) -> bool {
     unsafe {
         let exe = exe_path().to_string_lossy().to_string();
-        let mut cmd = wide(&format!("\"{}\" --watchdog {}", exe, GetCurrentProcessId()));
+        let mut cmd = wide(&format!("\"{}\" {}", exe, args));
         let si = STARTUPINFOW { cb: std::mem::size_of::<STARTUPINFOW>() as u32, ..Default::default() };
         let mut pi = PROCESS_INFORMATION::default();
-        if CreateProcessW(
-            None,
-            Some(PWSTR(cmd.as_mut_ptr())),
-            None,
-            None,
-            false,
-            CREATE_NO_WINDOW | DETACHED_PROCESS,
-            None,
-            None,
-            &si,
-            &mut pi,
-        )
-        .is_ok()
-        {
+        let ok = CreateProcessW(None, Some(PWSTR(cmd.as_mut_ptr())), None, None, false, flags, None, None, &si, &mut pi).is_ok();
+        if ok {
             let _ = CloseHandle(pi.hProcess);
             let _ = CloseHandle(pi.hThread);
         }
+        ok
+    }
+}
+
+/// Inicia o vigia. Ele nasce por um processo intermediário que fecha na hora,
+/// assim não fica "pendurado" no GlassDock: o Gerenciador de Tarefas não o
+/// encerra junto com a dock e a barra do Windows volta mesmo nesse caso.
+pub fn spawn_watchdog() {
+    let pid = unsafe { GetCurrentProcessId() };
+    let base = CREATE_NO_WINDOW | DETACHED_PROCESS;
+    let arg = format!("--watchdog-launch {}", pid);
+    if !spawn_self(&arg, base | CREATE_BREAKAWAY_FROM_JOB) {
+        spawn_self(&arg, base);
+    }
+}
+
+/// O processo intermediário: lança o vigia de verdade e sai.
+pub fn watchdog_launch(pid: u32) {
+    let base = CREATE_NO_WINDOW | DETACHED_PROCESS;
+    let arg = format!("--watchdog {}", pid);
+    if !spawn_self(&arg, base | CREATE_BREAKAWAY_FROM_JOB) {
+        spawn_self(&arg, base);
     }
 }
 
 /// Corpo do vigia: espera o processo principal terminar e, se ele não
-/// devolveu a barra, devolve aqui.
+/// devolveu a barra, devolve aqui. Se a dock travar (não responde), mostra a
+/// barra do Windows enquanto isso, para nunca ficar sem barra nenhuma.
 pub fn watchdog_main(pid: u32) {
     unsafe {
         if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
-            WaitForSingleObject(h, INFINITE);
+            let mut hung = 0;
+            loop {
+                if WaitForSingleObject(h, 4000) != WAIT_TIMEOUT {
+                    break;
+                }
+                let main = FindWindowW(w!("GlassDockWnd"), w!("GlassDockMain")).unwrap_or_default();
+                if !main.0.is_null() && IsHungAppWindow(main).as_bool() {
+                    hung += 1;
+                    if hung == 3 {
+                        for t in tray_windows() {
+                            let _ = ShowWindow(t, SW_SHOWNA);
+                        }
+                    }
+                } else {
+                    hung = 0;
+                }
+            }
             let _ = CloseHandle(h);
         }
         let st: State = read_json(&state_path()).unwrap_or_default();

@@ -7,7 +7,7 @@ Dock de vidro (glassmorphism) com widgets que substitui a barra de tarefas do Wi
 
 1. Copie `GlassDock.exe` para uma pasta sua, por exemplo `C:\Users\<você>\Apps\GlassDock\`.
 2. Dê dois cliques. Como o executável não tem assinatura digital, o SmartScreen pode avisar: clique em **Mais informações** e depois em **Executar assim mesmo**.
-3. A barra de tarefas some e a dock aparece. Para ter a barra de volta, basta sair do GlassDock (botão direito num espaço vazio da dock › **Sair do GlassDock**). Ela volta exatamente como estava, mesmo se o app fechar de repente.
+3. A barra de tarefas some e a dock aparece. Para ter a barra de volta, basta sair do GlassDock (botão direito num espaço vazio da dock › **Sair do GlassDock**). Ela volta exatamente como estava, mesmo se o app fechar de repente ou for encerrado pelo Gerenciador de Tarefas. Se a dock travar, a barra do Windows aparece sozinha enquanto isso.
 
 Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em `%APPDATA%\GlassDock\config.json`.
 
@@ -27,18 +27,20 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Clique do meio: nova janela
 - Botão direito: lista de janelas, nova janela, fixar/remover, mover janelas para outro workspace, mostrar no Explorador, fechar, encerrar e forçar encerramento
 - Prévias ao vivo das janelas ao parar o mouse num app (com botão de fechar; clique do meio também fecha)
-- Arraste para reordenar ou para fora para remover, e arraste o separador para mudar o tamanho dos ícones
+- Arraste para reordenar ou para fora para remover (o tamanho dos ícones fica em Ajustes › Aparência)
 - Solte arquivos na dock: um `.exe`/atalho é fixado, uma pasta vira pilha, e soltar na Lixeira apaga
 - Botão Iniciar (abre o Iniciar do Windows; o botão direito abre o menu Win+X)
 - Pastas na dock, Downloads e Lixeira (com Esvaziar Lixeira)
-- Espaçadores pequeno e grande, e separador (barrinha)
+- Espaçadores pequeno e grande, e separador (barrinha), em Ajustes › Workspaces
+- Botão direito num espaço vazio da barra: Gerenciador de Tarefas, ocultar automaticamente, efeito do mouse, workspaces, ícones da bandeja, widgets e ajustes
 - Posição embaixo, em cima, à esquerda ou à direita
 - Ocultar automaticamente, esconder em tela cheia (jogos, vídeos) e reservar o espaço para janelas maximizadas
+- Volta sozinha depois de bloquear e desbloquear a tela ou de suspender o PC
 - Vários monitores: a dock segue o ponteiro, ou uma dock por monitor
 - Ctrl+Alt+D leva o foco para a dock (setas, Enter, Esc)
 
 **Status e bandeja** em linha ou em grade (duas linhas, metade do espaço)
-- Rede, volume (a roda do mouse muda o volume) e bateria; um clique abre as Configurações rápidas. A seta, a rede, o volume e a bateria podem ser tirados um a um em Ajustes › Barra e bandeja (menos itens, menos largura).
+- Rede, volume (a roda do mouse muda o volume) e bateria; um clique abre as Configurações rápidas. A seta, a rede, o volume e a bateria podem ser tirados um a um em Ajustes › Barra e bandeja (menos itens, menos largura); os que saem da barra ficam no painel de ícones ocultos, e o alfinete deles os devolve para a barra.
 - Ícones da bandeja dos outros apps (Discord, Lightshot…): fixe os que quiser pelo alfinete no canto do ícone; o resto fica na setinha (ou em botão direito na barra › Ícones da bandeja…, se a seta estiver escondida). O clique e o botão direito vão para o próprio app e fecham o painel.
 - Apps fixados que abrem por um atualizador (Figma, Discord, Slack…) ou mudam de pasta ao atualizar são reconhecidos: o app aprende a janela na primeira abertura pela dock.
 - Relógio com data no formato regional; o clique abre o calendário
@@ -55,7 +57,7 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Timer de foco, Pomodoro, Contagem regressiva, Progresso do tempo
 - Calendário em 6 estilos (incluindo Data + hora e Hora + data + próximo). A hora do próximo compromisso aparece grande, relativa quando falta menos de 12 h. As agendas ICS (Google, Outlook, iCloud) valem para o app inteiro.
 - Lista de tarefas, Post-it
-- Tocando agora: Spotify, navegador, app Música ou qualquer player, com capa e controles
+- Tocando agora: Spotify, navegador, app Música ou qualquer player, com capa e controles. Pode aparecer sempre, só com música ativa (tocando ou pausada há menos de 1 h) ou só tocando.
 - Bateria (3 estilos), Atividade de CPU e memória (3 estilos), Rede (2 estilos), Layout do teclado
 - Conta-gotas (6 formatos de cor, atalho opcional Ctrl+Alt+P), Capturas de tela (arraste direto para outros apps), Beber água
 - Mascote: gato, cachorro, passarinho, dragão, dino, guerreira, guerreiro, Papai Noel e fantasminha. Ele anda por cima da dock conforme a CPU e você pode colocar comida.

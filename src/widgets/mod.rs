@@ -107,6 +107,8 @@ pub struct Shared {
     pub media_tx: Option<Sender<crate::media::Cmd>>,
     pub media_art: Option<ID2D1Bitmap>,
     pub media_art_serial: u64,
+    /// último momento (unix, s) em que havia música tocando (ou pausada, ao abrir)
+    pub media_last_playing: i64,
     pub icons: IconCache,
     pub toasts: Vec<Toast>,
     pub ws_list: Vec<(u32, String, u32)>,
@@ -151,6 +153,10 @@ impl Shared {
 
 pub trait Widget {
     fn draw(&mut self, t: &Tile, sh: &mut Shared);
+    /// O widget some da dock agora? (ex.: player sem música tocando)
+    fn hidden(&self, _sh: &Shared) -> bool {
+        false
+    }
     fn save(&self) -> Value;
     /// Intervalo (ms) para redesenhar o tile; None = só por evento.
     fn interval(&self, _sh: &Shared) -> Option<u32> {

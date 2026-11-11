@@ -13,7 +13,7 @@ use crate::util::*;
 use crate::widgets::{Shared, Tile, Widget};
 use crate::winlist::{self, WinList};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SlotKind {
     Start,
     WsDots,
@@ -289,8 +289,9 @@ impl Dock {
             gap: s * 0.18,
             sgap: s * 0.06,
             pad_side: s * 0.22,
-            pad_top: s * 0.17,
-            pad_bottom: s * 0.27,
+            // itens centrados na barra: widgets (sem indicador) e apps ficam na mesma linha
+            pad_top: s * 0.22,
+            pad_bottom: s * 0.22,
             thick,
             margin,
             head,
@@ -471,7 +472,14 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
                 if ids.is_empty() {
                     continue;
                 }
-                let wid = ids[(*cur).min(ids.len() - 1)];
+                let mut wid = ids[(*cur).min(ids.len() - 1)];
+                if widgets.get(&wid).map(|w| w.hidden(sh)).unwrap_or(false) {
+                    // escondido agora (ex.: player sem música): mostra outro da pilha ou some
+                    match ids.iter().copied().find(|id| !widgets.get(id).map(|w| w.hidden(sh)).unwrap_or(true)) {
+                        Some(o) => wid = o,
+                        None => continue,
+                    }
+                }
                 let units = cfg.widget(wid).map(|w| w.units).unwrap_or(1).clamp(1, 4);
                 let units = if vertical { 1 } else { units };
                 let len = units as f32 + (units as f32 - 1.0) * 0.18;
@@ -621,7 +629,8 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
             }
         }
         // a setinha dos ícones ocultos (pode ser escondida; o menu da barra a abre)
-        if cfg.general.show_chevron && !icons_now.is_empty() {
+        let sys_hidden = !cfg.general.show_net || !cfg.general.show_vol || (!cfg.general.show_bat && sh.status.battery.present);
+        if cfg.general.show_chevron && (!icons_now.is_empty() || sys_hidden) {
             let mut s = Slot::new(SlotKind::Chevron, 0.4);
             s.mag = false;
             s.small = true;
@@ -1192,13 +1201,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                                 _ => 0,
                             };
                             // embaixo da pilha, na linha dos indicadores de app aberto
-                            let off = g.pad_bottom * 0.45 + g.margin;
-                            let (cx, cy) = match pos {
-                                DockPos::Bottom => (r.cx(), bar.b() - off + g.margin * 0.4),
-                                DockPos::Top => (r.cx(), bar.y + off - g.margin * 0.4),
-                                DockPos::Left => (bar.x + off - g.margin * 0.4, r.cy()),
-                                DockPos::Right => (bar.r() - off + g.margin * 0.4, r.cy()),
-                            };
+                            let (cx, cy) = ind_center(&g, pos, r, &bar);
                             let dot = (g.s * 0.035).max(1.6 * g.sc);
                             let step = dot * 3.2;
                             let n = sl.stack as f32;
@@ -1268,19 +1271,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                     if is_hover {
                         c.fill_rrect(r.centered(r.w, (g.s * 0.62).min(r.h)), 6.0 * g.sc, th.glyph.a(0.12));
                     }
-                    let st = &ctx_sh.status;
-                    let (gl, tip) = match sl.kind {
-                        SlotKind::Net => (
-                            st.net_glyph(),
-                            match st.net {
-                                Net::Wifi(q) => format!("{} · {}%", if st.ssid.is_empty() { "Wi-Fi".into() } else { st.ssid.clone() }, q),
-                                Net::Ethernet => "Rede cabeada".into(),
-                                Net::None => "Sem internet".into(),
-                            },
-                        ),
-                        SlotKind::Vol => (st.vol_glyph(), if st.muted { "Sem som".into() } else { format!("Volume {:.0}%", st.vol * 100.0) }),
-                        _ => (st.battery_glyph(), format!("Bateria {}%{}", st.battery.pct, if st.battery.charging { " · carregando" } else { "" })),
-                    };
+                    let (gl, tip) = status_glyph_tip(&ctx_sh.status, sl.kind);
                     c.glyph(gl, r, (g.s * 0.34).min(r.h * 0.66), th.glyph);
                     if is_hover {
                         label = Some((r, tip));
@@ -1394,16 +1385,37 @@ fn d_map(g: &Geo, u: f32, v: f32) -> (f32, f32) {
     }
 }
 
+/// Ícone e dica de rede, volume e bateria (na dock e no painel da bandeja).
+pub fn status_glyph_tip(st: &crate::status::Status, kind: SlotKind) -> (u32, String) {
+    match kind {
+        SlotKind::Net => (
+            st.net_glyph(),
+            match st.net {
+                Net::Wifi(q) => format!("{} · {}%", if st.ssid.is_empty() { "Wi-Fi".into() } else { st.ssid.clone() }, q),
+                Net::Ethernet => "Rede cabeada".into(),
+                Net::None => "Sem internet".into(),
+            },
+        ),
+        SlotKind::Vol => (st.vol_glyph(), if st.muted { "Sem som".into() } else { format!("Volume {:.0}%", st.vol * 100.0) }),
+        _ => (st.battery_glyph(), format!("Bateria {}%{}", st.battery.pct, if st.battery.charging { " · carregando" } else { "" })),
+    }
+}
+
+/// Centro do indicador de app aberto (e das bolinhas de pilha): no meio da faixa entre o ícone e a borda da barra.
+fn ind_center(g: &Geo, pos: DockPos, r: Rect, bar: &Rect) -> (f32, f32) {
+    let off = g.pad_bottom * 0.48;
+    match pos {
+        DockPos::Bottom => (r.cx(), bar.b() - off),
+        DockPos::Top => (r.cx(), bar.y + off),
+        DockPos::Left => (bar.x + off, r.cy()),
+        DockPos::Right => (bar.r() - off, r.cy()),
+    }
+}
+
 fn draw_indicator(c: &Canvas, cfg: &Config, g: &Geo, pos: DockPos, r: Rect, sl: &Slot, col: Color, bar: &Rect) {
     let col = if sl.flashing { ORANGE } else { col };
     let d = (g.s * 0.07).max(3.0 * g.sc);
-    let off = g.pad_bottom * 0.45 + g.margin;
-    let (cx, cy) = match pos {
-        DockPos::Bottom => (r.cx(), bar.b() - off + g.margin * 0.4),
-        DockPos::Top => (r.cx(), bar.y + off - g.margin * 0.4),
-        DockPos::Left => (bar.x + off - g.margin * 0.4, r.cy()),
-        DockPos::Right => (bar.r() - off + g.margin * 0.4, r.cy()),
-    };
+    let (cx, cy) = ind_center(g, pos, r, bar);
     match cfg.appearance.indicator {
         Indicator::Dot => {
             c.fill_circle(cx, cy, d / 2.0 + if sl.active { 0.5 } else { 0.0 }, col.a(if sl.active { 1.0 } else { 0.75 }));

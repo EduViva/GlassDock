@@ -38,6 +38,12 @@ fn main() {
         }
         return;
     }
+    if args.len() >= 3 && args[1] == "--watchdog-launch" {
+        if let Ok(pid) = args[2].parse::<u32>() {
+            taskbar::watchdog_launch(pid);
+        }
+        return;
+    }
     if args.len() >= 2 && args[1] == "--claude-statusline" {
         widgets::ai::statusline_main();
         return;

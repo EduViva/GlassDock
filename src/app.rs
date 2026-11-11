@@ -55,6 +55,7 @@ const T_FOLLOW: usize = 13;
 const T_DUMP: usize = 20;
 const T_CLICK: usize = 21;
 const T_EDGE: usize = 22;
+const T_RECOVER: usize = 23;
 
 static MAIN: AtomicIsize = AtomicIsize::new(0);
 
@@ -145,8 +146,6 @@ pub enum Act {
     Unstack(usize),
     UnstackAll(usize),
     RemoveItem(usize),
-    AddSpacer(bool),
-    AddDivider,
     ToggleAutohide,
     SetHover(Hover),
     ToggleRunning,
@@ -221,6 +220,10 @@ pub struct App {
     media_started: bool,
     last_rebroadcast: u64,
     watchdog_started: bool,
+    /// sessão bloqueada (tela de bloqueio)
+    locked: bool,
+    /// widgets escondidos agora (para refazer a dock quando muda)
+    hidden_widgets: Vec<u32>,
     pending_click: Option<(usize, usize, f32, f32, u32)>,
 }
 
@@ -335,6 +338,7 @@ impl App {
             media_tx: None,
             media_art: None,
             media_art_serial: 0,
+            media_last_playing: 0,
             icons: Default::default(),
             toasts: vec![],
             ws_list: vec![],
@@ -435,6 +439,8 @@ impl App {
             media_started: false,
             last_rebroadcast: 0,
             watchdog_started: false,
+            locked: false,
+            hidden_widgets: vec![],
             pending_click: None,
         }
     }
@@ -448,6 +454,8 @@ impl App {
             self.shellhook_msg = RegisterWindowMessageW(w!("SHELLHOOK"));
             self.taskbar_created_msg = RegisterWindowMessageW(w!("TaskbarCreated"));
             let _ = RegisterShellHookWindow(self.main);
+            // bloqueio/desbloqueio da sessão: a dock se refaz ao voltar
+            let _ = windows::Win32::System::RemoteDesktop::WTSRegisterSessionNotification(self.main, windows::Win32::System::RemoteDesktop::NOTIFY_FOR_THIS_SESSION);
             let tray_h = taskbar::explorer_tray();
             GetWindowThreadProcessId(tray_h, Some(&mut self.explorer_pid));
             let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
@@ -595,6 +603,8 @@ impl App {
     }
 
     fn create_docks(&mut self) {
+        // mantém o workspace atual ao refazer as docks (troca de monitor, desbloqueio)
+        let prev_ws: Vec<u32> = self.docks.iter().map(|d| d.ws).collect();
         let plates: Vec<HWND> = self.docks.iter().map(|d| d.plate).collect();
         for p in plates {
             self.remove_appbar_of(p);
@@ -616,7 +626,8 @@ impl App {
             vec![glass::primary_monitor()]
         };
         for (i, m) in targets.iter().enumerate() {
-            let d = Dock::new(i, *m, first_ws);
+            let ws = prev_ws.get(i).or(prev_ws.first()).copied().filter(|w| self.cfg.ws_index(*w).is_some()).unwrap_or(first_ws);
+            let d = Dock::new(i, *m, ws);
             crate::dragdrop::register(d.hwnd, i);
             self.docks.push(d);
         }
@@ -1179,6 +1190,12 @@ impl App {
                     T_PET => self.on_pet(),
                     T_PANEL => self.render_panel(),
                     T_TOAST => self.expire_toasts(),
+                    T_RECOVER => {
+                        unsafe {
+                            let _ = KillTimer(Some(self.main), T_RECOVER);
+                        }
+                        self.recover_display();
+                    }
                     T_EDGE => {
                         if self.docks.iter().any(|d| d.hide >= 1.0) {
                             self.maybe_show();
@@ -1268,8 +1285,16 @@ impl App {
                         self.sh.media_art = m.art.as_ref().and_then(|b| gfx().bitmap_from_bytes(b, 256));
                     }
                     self.sh.media = m;
+                    let has = self.sh.media.has_session && !self.sh.media.title.is_empty();
+                    if !has {
+                        self.sh.media_last_playing = 0;
+                    } else if self.sh.media.playing || self.sh.media_last_playing == 0 {
+                        self.sh.media_last_playing = unix_now();
+                    }
                 }
-                self.render_all();
+                if !self.check_widget_visibility() {
+                    self.render_all();
+                }
                 if self.panel.is_some() {
                     self.render_panel();
                 }
@@ -1293,7 +1318,30 @@ impl App {
                 self.open_settings(None);
                 Some(LRESULT(0))
             }
+            WM_WTSSESSION_CHANGE => {
+                const WTS_SESSION_LOCK: usize = 7;
+                const WTS_SESSION_UNLOCK: usize = 8;
+                match wp.0 {
+                    WTS_SESSION_LOCK => self.locked = true,
+                    WTS_SESSION_UNLOCK => {
+                        self.locked = false;
+                        self.unstick_docks();
+                        // o Windows ainda está arrumando a área de trabalho: refaz a dock logo depois
+                        unsafe {
+                            SetTimer(Some(self.main), T_RECOVER, 1500, None);
+                        }
+                    }
+                    _ => {}
+                }
+                Some(LRESULT(0))
+            }
             WM_POWERBROADCAST => {
+                // volta da suspensão/hibernação
+                if wp.0 == 0x12 || wp.0 == 0x7 {
+                    unsafe {
+                        SetTimer(Some(self.main), T_RECOVER, 2000, None);
+                    }
+                }
                 self.sh.status.refresh_battery();
                 self.render_all();
                 Some(LRESULT(1))
@@ -1344,7 +1392,8 @@ impl App {
                 let on = lp.0 != 0;
                 let fg = unsafe { GetForegroundWindow() };
                 let fmon = unsafe { MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST) };
-                let applies = !on || fmon == self.docks[i].monitor;
+                // a tela de bloqueio conta como "tela cheia": ignora, senão a dock fica escondida ao desbloquear
+                let applies = (!on || fmon == self.docks[i].monitor) && !(on && self.locked);
                 if applies && self.cfg.general.hide_in_fullscreen {
                     let d = &mut self.docks[i];
                     d.fullscreen = on;
@@ -1372,6 +1421,53 @@ impl App {
     // -----------------------------------------------------------------------
     // Ocultar automaticamente
     // -----------------------------------------------------------------------
+
+    /// Tira a dock de um estado "escondida por tela cheia" que ficou preso
+    /// (bloqueio de tela, suspensão, evento perdido do Windows).
+    fn unstick_docks(&mut self) {
+        for i in 0..self.docks.len() {
+            let d = &mut self.docks[i];
+            if d.fullscreen && !glass::fullscreen_on(d.monitor) {
+                d.fullscreen = false;
+                if !self.cfg.general.autohide {
+                    self.reveal(i);
+                } else {
+                    self.ensure_edge_watch();
+                }
+            } else if !d.fullscreen && !self.cfg.general.autohide && d.hide < 0.5 && !unsafe { IsWindowVisible(d.hwnd) }.as_bool() {
+                // a janela sumiu sem a gente pedir
+                glass::show(d.plate, true);
+                glass::show(d.hwnd, true);
+                d.plate_rect = RECT::default();
+                self.render(i);
+            }
+        }
+    }
+
+    /// Refaz as janelas da dock e volta a esconder a barra do Windows
+    /// (depois de desbloquear a tela, voltar da suspensão etc.).
+    fn recover_display(&mut self) {
+        if self.locked {
+            return;
+        }
+        self.close_panel();
+        self.close_preview();
+        self.create_docks();
+        self.apply_taskbar();
+        self.refresh_windows();
+        unsafe {
+            if self.cfg.general.autohide {
+                SetTimer(Some(self.main), T_HIDE, 1500, None);
+            }
+        }
+        self.unstick_docks();
+    }
+
+    fn ensure_edge_watch(&mut self) {
+        unsafe {
+            SetTimer(Some(self.main), T_EDGE, 120, None);
+        }
+    }
 
     fn reveal(&mut self, i: usize) {
         let d = &mut self.docks[i];
@@ -1589,9 +1685,6 @@ impl App {
             if d.drag.is_none() && ((x - x0).abs() + (y - y0).abs()) > 7.0 * g.sc {
                 if s == usize::MAX {
                     d.press = None;
-                } else if d.slots[s].kind == SlotKind::Sep && d.slots[s].item.is_none() {
-                    let (_, v) = d.unmap(&g, x, y);
-                    d.drag = Some(dock::Drag { slot: s, u: 0.0, v, out: false, target: s, resize: true, start_size: self.cfg.appearance.icon_size, start_v: v });
                 } else if d.slots[s].draggable() {
                     let (u, v) = d.unmap(&g, x, y);
                     d.drag = Some(dock::Drag { slot: s, u, v, out: false, target: s, resize: false, start_size: 0.0, start_v: v });
@@ -2187,9 +2280,7 @@ impl App {
             }
         }
         if bar_menu {
-            items.push(mi("Adicionar espaçador pequeno", Act::AddSpacer(false)));
-            items.push(mi("Adicionar espaçador grande", Act::AddSpacer(true)));
-            items.push(mi("Adicionar separador │", Act::AddDivider));
+            items.push(mi("Gerenciador de Tarefas", Act::Open("taskmgr.exe".into())));
             items.push(MItem::Sep);
             items.push(mic("Ocultar automaticamente", Act::ToggleAutohide, self.cfg.general.autohide));
             let h = self.cfg.appearance.hover;
@@ -2384,23 +2475,9 @@ impl App {
                 self.mark_save();
                 self.rebuild_all();
             }
-            Act::AddSpacer(large) => {
-                let items = &mut self.cfg.workspaces[wsi].items;
-                let pos = items.iter().rposition(|x| matches!(x, DockItem::App(_) | DockItem::Start)).map(|p| p + 1).unwrap_or(items.len());
-                items.insert(pos, DockItem::Spacer { large });
-                self.mark_save();
-                self.rebuild_all();
-            }
             Act::TrayPanel => {
                 let anchor = self.status_anchor(di);
                 self.open_panel(PanelKind::Tray, di, anchor, "chevron".into());
-            }
-            Act::AddDivider => {
-                let items = &mut self.cfg.workspaces[wsi].items;
-                let pos = items.iter().rposition(|x| matches!(x, DockItem::App(_) | DockItem::Start)).map(|p| p + 1).unwrap_or(items.len());
-                items.insert(pos, DockItem::Divider);
-                self.mark_save();
-                self.rebuild_all();
             }
             Act::ToggleAutohide => {
                 self.cfg.general.autohide = !self.cfg.general.autohide;
@@ -2539,7 +2616,7 @@ impl App {
                 }
             }
             PanelKind::Tray => {
-                let n = tray::visible_icons().len().max(1);
+                let n = (tray::visible_icons().len() + self.hidden_status().len()).max(1);
                 let cols = n.clamp(4, 6);
                 (cols as f32 * 52.0, 64.0 + ((n + cols - 1) / cols) as f32 * 52.0 + 24.0)
             }
@@ -2675,6 +2752,25 @@ impl App {
         }
     }
 
+    /// Rede, volume e bateria que estão fora da barra (ficam no painel da bandeja).
+    fn hidden_status(&self) -> Vec<SlotKind> {
+        let g = &self.cfg.general;
+        let mut v = vec![];
+        if !g.show_status {
+            return v;
+        }
+        if !g.show_net {
+            v.push(SlotKind::Net);
+        }
+        if !g.show_vol {
+            v.push(SlotKind::Vol);
+        }
+        if !g.show_bat && self.sh.status.battery.present {
+            v.push(SlotKind::Bat);
+        }
+        v
+    }
+
     fn tray_panel(&mut self, ui: &mut Ui) {
         let r = ui.row(24.0);
         ui.c.text("Ícones da bandeja", r, 13.5 * ui.s, W_SEMIBOLD, TXT, Align::Left);
@@ -2682,7 +2778,10 @@ impl App {
         ui.c.text("Clique para abrir · alfinete (canto do ícone) para fixar na dock", r2, 11.0 * ui.s, W_NORMAL, TXT2, Align::Left);
         ui.gap(6.0);
         let icons_now = tray::visible_icons();
-        let n = icons_now.len();
+        // rede, volume e bateria tirados da barra aparecem aqui primeiro
+        let sys = self.hidden_status();
+        let ns = sys.len();
+        let n = icons_now.len() + ns;
         if n == 0 {
             ui.note("Nenhum ícone de app agora.");
             return;
@@ -2692,7 +2791,56 @@ impl App {
         let chh = 52.0 * ui.s;
         let y0 = ui.y;
         let mut pin_toggle: Option<(String, bool)> = None;
-        for (k, ic) in icons_now.iter().enumerate() {
+        let mut sys_pin: Option<SlotKind> = None;
+        for (k, kind) in sys.iter().enumerate() {
+            let cell = Rect::new(ui.area.x + cw * (k % cols) as f32, y0 + chh * (k / cols) as f32, cw, chh);
+            let (hov, clk) = ui.hit(idn("ts", k as u64), cell);
+            if hov {
+                ui.c.fill_rrect(cell.inset(2.0), 8.0 * ui.s, FILL_HOVER);
+            }
+            let (gl, tip) = dock::status_glyph_tip(&self.sh.status, *kind);
+            ui.c.glyph(gl, cell.centered(26.0 * ui.s, 26.0 * ui.s), 17.0 * ui.s, TXT);
+            // alfinete: devolve o item para a barra
+            let pr = Rect::new(cell.r() - 22.0 * ui.s, cell.y + 1.0 * ui.s, 20.0 * ui.s, 20.0 * ui.s);
+            let mut on_pin = false;
+            if hov {
+                let (ph, pc) = ui.hit(idn("tsp", k as u64), pr);
+                on_pin = ph;
+                if ph {
+                    ui.c.fill_circle(pr.cx(), pr.cy(), 10.0 * ui.s, FILL_HOVER);
+                }
+                ui.c.glyph(0xE718, pr, 11.0 * ui.s, if ph { TXT } else { TXT2 });
+                if pc {
+                    sys_pin = Some(*kind);
+                    continue;
+                }
+                let tr = Rect::new(ui.area.x, ui.area.b() - 20.0 * ui.s, ui.area.w, 20.0 * ui.s);
+                ui.c.text(&tip, tr, 11.0 * ui.s, W_NORMAL, TXT2, Align::Center);
+                if *kind == SlotKind::Vol && ui.inp.wheel != 0.0 {
+                    self.sh.status.change_volume(ui.inp.wheel * 0.02);
+                    ui.changed = true;
+                }
+            }
+            if clk && !on_pin {
+                taskbar::open_quick_settings();
+                self.sh.close_panel = true;
+            }
+            if *kind == SlotKind::Vol && ui.right_clicked(cell) {
+                self.sh.status.toggle_mute();
+                ui.changed = true;
+            }
+        }
+        if let Some(kind) = sys_pin {
+            match kind {
+                SlotKind::Net => self.cfg.general.show_net = true,
+                SlotKind::Vol => self.cfg.general.show_vol = true,
+                _ => self.cfg.general.show_bat = true,
+            }
+            self.mark_save();
+            self.rebuild_all();
+        }
+        for (k0, ic) in icons_now.iter().enumerate() {
+            let k = k0 + ns;
             let cell = Rect::new(ui.area.x + cw * (k % cols) as f32, y0 + chh * (k / cols) as f32, cw, chh);
             let (hov, clk) = ui.hit(idn("ti", k as u64), cell);
             let pinned = self.cfg.tray_pinned.iter().any(|p| p == &ic.key || {
@@ -2924,7 +3072,9 @@ impl App {
         }
         if self.sh.redraw {
             self.sh.redraw = false;
-            self.render_all();
+            if !self.check_widget_visibility() {
+                self.render_all();
+            }
         }
     }
 
@@ -3443,6 +3593,25 @@ impl App {
         // rede de segurança caso algum evento do Windows se perca
         self.refresh_windows();
         self.taskbar.hide_now();
+        if !self.locked {
+            self.unstick_docks();
+        }
+        // player que some 1 h depois de pausado
+        if self.sh.media.playing {
+            self.sh.media_last_playing = unix_now();
+        }
+        self.check_widget_visibility();
+    }
+
+    /// Refaz a dock se algum widget apareceu/sumiu (ex.: player de música). Devolve se refez.
+    fn check_widget_visibility(&mut self) -> bool {
+        let sig: Vec<u32> = self.widgets.iter().filter(|(_, w)| w.hidden(&self.sh)).map(|(id, _)| *id).collect();
+        if sig != self.hidden_widgets {
+            self.hidden_widgets = sig;
+            self.rebuild_all();
+            return true;
+        }
+        false
     }
 
     pub fn schedule_pet(&mut self) {

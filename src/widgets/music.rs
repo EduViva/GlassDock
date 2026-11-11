@@ -10,11 +10,13 @@ use crate::ui::*;
 #[serde(default)]
 struct Cfg {
     art_on_icon: bool,
+    /// 0 sempre, 1 com música ativa (tocando ou pausada há menos de 1 h), 2 só tocando
+    show: u32,
 }
 
 impl Default for Cfg {
     fn default() -> Self {
-        Cfg { art_on_icon: true }
+        Cfg { art_on_icon: true, show: 0 }
     }
 }
 
@@ -63,6 +65,14 @@ impl Widget for Music {
     }
     fn needs_media(&self) -> bool {
         true
+    }
+    fn hidden(&self, sh: &Shared) -> bool {
+        let has = sh.media.has_session && !sh.media.title.is_empty();
+        match self.c.show {
+            1 => !has || (!sh.media.playing && crate::util::unix_now() - sh.media_last_playing > 3600),
+            2 => !has || !sh.media.playing,
+            _ => false,
+        }
     }
     fn draw(&mut self, t: &Tile, sh: &mut Shared) {
         let m = &sh.media;
@@ -142,24 +152,19 @@ impl Widget for Music {
         sh.media_cmd(Cmd::PlayPause);
     }
     fn menu(&self) -> Vec<(u32, String)> {
-        vec![(2, "Tocar/pausar".into()), (3, "Próxima".into()), (4, "Anterior".into()), (5, "Mostrar o player".into())]
+        vec![(2, "Tocar/pausar".into()), (3, "Próxima".into()), (4, "Anterior".into())]
     }
     fn on_menu(&mut self, idm: u32, sh: &mut Shared) {
         match idm {
             2 => sh.media_cmd(Cmd::PlayPause),
             3 => sh.media_cmd(Cmd::Next),
             4 => sh.media_cmd(Cmd::Prev),
-            5 => {
-                if !sh.media.app_id.is_empty() {
-                    sh.focus_app = Some(sh.media.app_id.clone());
-                }
-            }
             _ => {}
         }
     }
-    fn panel_size(&self, sh: &Shared) -> (f32, f32) {
-        let has = sh.media.has_session && !sh.media.title.is_empty();
-        (320.0, if has { 420.0 } else { 350.0 })
+    fn panel_size(&self, _sh: &Shared) -> (f32, f32) {
+        // capa 200 + 10 + título 24 + artista 20 + 8 + progresso 30 + botões 52 (as margens o painel põe)
+        (320.0, 344.0)
     }
     fn panel_interval(&self, sh: &Shared) -> Option<u32> {
         if sh.media.playing {
@@ -213,16 +218,13 @@ impl Widget for Music {
         if ui.icon_btn(id("next"), Rect::new(x0 + 2.0 * (bw + gap), r.y, bw, bw), 0xE893, 18.0, TXT) {
             sh.media_cmd(Cmd::Next);
         }
-        if m.has_session && !m.app_id.is_empty() {
-            ui.gap(6.0);
-            let r = ui.row(30.0);
-            if ui.button_k(id("show"), r.centered(150.0 * ui.s, r.h), "Mostrar o player", Btn::Ghost) {
-                sh.focus_app = Some(m.app_id.clone());
-                sh.close_panel = true;
-            }
-        }
     }
     fn settings(&mut self, ui: &mut Ui, sh: &mut Shared) {
+        if ui.labeled_segmented(id("show"), "Aparecer na dock", &["Sempre", "Música ativa", "Só tocando"], &mut self.c.show) {
+            sh.save = true;
+            sh.redraw = true;
+        }
+        ui.note("Música ativa: tocando ou pausada (some 1 h depois de pausar). Só tocando: some ao pausar.");
         if ui.row_toggle(id("art"), "Capa do álbum no ícone", &mut self.c.art_on_icon) {
             sh.save = true;
         }

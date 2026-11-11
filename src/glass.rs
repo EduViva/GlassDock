@@ -474,3 +474,37 @@ pub fn enable_dark_menus(dark: bool) {
         }
     }
 }
+
+/// Há um app em tela cheia de verdade na frente deste monitor? (usado para
+/// destravar a dock quando o aviso de "saiu da tela cheia" do Windows se perde)
+pub fn fullscreen_on(m: HMONITOR) -> bool {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return false;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(fg, Some(&mut pid));
+        if pid == windows::Win32::System::Threading::GetCurrentProcessId() {
+            return false;
+        }
+        let mut cls = [0u16; 64];
+        let n = GetClassNameW(fg, &mut cls).max(0) as usize;
+        let c = String::from_utf16_lossy(&cls[..n]);
+        if matches!(c.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "Windows.UI.Core.CoreWindow") {
+            return false;
+        }
+        if MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != m {
+            return false;
+        }
+        // janela maximizada comum (com barra de título) não é tela cheia
+        let style = GetWindowLongW(fg, GWL_STYLE) as u32;
+        if style & WS_CAPTION.0 == WS_CAPTION.0 {
+            return false;
+        }
+        let mut r = RECT::default();
+        let _ = GetWindowRect(fg, &mut r);
+        let (mon, _) = monitor_info(m);
+        r.left <= mon.left && r.top <= mon.top && r.right >= mon.right && r.bottom >= mon.bottom
+    }
+}

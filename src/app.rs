@@ -19,7 +19,7 @@ use crate::gfx::*;
 use crate::glass::{self, *};
 use crate::icons;
 use crate::popup::*;
-use crate::status::Status;
+use crate::status::{Net, Status};
 use crate::sysmon::SysMon;
 use crate::taskbar::{self, Taskbar};
 use crate::tray;
@@ -38,6 +38,7 @@ pub const WM_APP_TASKBAR: u32 = WM_APP + 7;
 pub const WM_APP_APPBAR: u32 = WM_APP + 8;
 pub const WM_APP_SHOW_SETTINGS: u32 = WM_APP + 9;
 pub const WM_APP_LAUNCHFAIL: u32 = WM_APP + 10;
+pub const WM_APP_OVERLAY: u32 = WM_APP + 11;
 
 const T_ANIM: usize = 1;
 const T_TICK: usize = 2;
@@ -358,6 +359,7 @@ impl App {
             drag_out: None,
             rewatch: false,
             ics: Default::default(),
+            badges: Default::default(),
         };
         let mut cfg = cfg;
         let mut sh = sh;
@@ -550,6 +552,24 @@ impl App {
         self.open_panel(PanelKind::Calendar, 0, anchor, "dumpcal".into());
         if let Some(p) = &self.panel {
             p.p.surf.save_png(&format!("{}\\panel_clock_calendar.png", dir));
+        }
+        self.close_panel();
+        // painel da bandeja com ícones e bateria de mentira (só no teste)
+        {
+            let ic = unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() };
+            let fake: Vec<tray::TrayIcon> = ["discord.exe", "telegram.exe", "onedrive.exe", "lightshot.exe", "steam.exe", "spotify.exe", "teams.exe"]
+                .iter()
+                .enumerate()
+                .map(|(k, e)| tray::TrayIcon { hicon: ic, tip: e.to_string(), key: format!("{}|{}", e, k), exe: e.to_string(), ..Default::default() })
+                .collect();
+            tray::with(|t| t.icons = fake);
+            self.cfg.tray_pinned = vec!["telegram.exe|*".into()];
+            self.sh.status.battery = crate::status::Battery { present: true, pct: 82, charging: false, ac: false, secs_left: Some(15000), saver: false };
+            self.open_panel(PanelKind::Tray, 0, anchor, "dumptray".into());
+            if let Some(p) = &self.panel {
+                p.p.surf.save_png(&format!("{}\\panel_tray.png", dir));
+            }
+            tray::with(|t| t.icons.clear());
         }
         self.close_panel();
         let pages = [
@@ -875,11 +895,46 @@ impl App {
         self.docks.first().map(|d| d.ws).unwrap_or(1)
     }
 
+    /// Recalcula os selos de notificação (contagem no título e ícone de
+    /// sobreposição) e redesenha só se algo mudou.
+    fn refresh_badges(&mut self) {
+        tray::prune_overlays();
+        let mut m: HashMap<isize, winlist::Badge> = HashMap::new();
+        for w in &self.wins.wins {
+            let explorer = w.exe.to_lowercase().ends_with("\\explorer.exe");
+            let count = if explorer { 0 } else { winlist::parse_title_count(&winlist::window_title(w.hwnd)) };
+            let overlay = tray::overlay_of(w.hwnd).and_then(|(ic, ser)| {
+                let key = format!("ovl:{}:{}", w.hwnd.0 as isize, ser);
+                if self.sh.icons.get_hicon_cached(&key).is_some() || self.sh.icons.put_hicon(&key, ic).is_some() {
+                    Some(key)
+                } else {
+                    None
+                }
+            });
+            if count > 0 || overlay.is_some() {
+                m.insert(w.hwnd.0 as isize, winlist::Badge { count, overlay });
+            }
+        }
+        if m != self.sh.badges {
+            // libera os ícones de selos que não existem mais
+            for (h, b) in &self.sh.badges {
+                if let Some(k) = &b.overlay {
+                    if m.get(h).and_then(|x| x.overlay.as_ref()) != Some(k) {
+                        self.sh.icons.forget(k);
+                    }
+                }
+            }
+            self.sh.badges = m;
+            self.render_all();
+        }
+    }
+
     pub fn refresh_windows(&mut self) {
         let map: Vec<(isize, u32)> = self.docks.iter().map(|d| (d.monitor.0 as isize, d.ws)).collect();
         let default_ws = self.docks.first().map(|d| d.ws).unwrap_or(1);
         let assign = move |mon: isize| -> u32 { map.iter().find(|(m, _)| *m == mon).map(|x| x.1).unwrap_or(default_ws) };
         let changed = self.wins.refresh(&assign);
+        self.refresh_badges();
         // janelas novas de um app recém-aberto: terminou a animação de abertura
         if changed {
             for d in self.docks.iter_mut() {
@@ -1302,6 +1357,10 @@ impl App {
             }
             WM_APP_TASKBAR => {
                 self.taskbar.hide_now();
+                Some(LRESULT(0))
+            }
+            WM_APP_OVERLAY => {
+                self.refresh_badges();
                 Some(LRESULT(0))
             }
             WM_APP_LAUNCHFAIL => {
@@ -1972,8 +2031,9 @@ impl App {
                 self.toggle_panel(PanelKind::Tray, i, anchor, "chevron".into());
             }
             SlotKind::Net | SlotKind::Vol | SlotKind::Bat => {
-                self.close_panel();
-                taskbar::open_quick_settings();
+                // o painel da bandeja tem rede, volume e bateria (e leva às Configurações rápidas)
+                let anchor = self.slot_screen_rect(i, s);
+                self.toggle_panel(PanelKind::Tray, i, anchor, "chevron".into());
             }
             SlotKind::Clock => {
                 let anchor = self.slot_screen_rect(i, s);
@@ -2615,11 +2675,7 @@ impl App {
                     (390.0, 70.0 + ((n + 3) / 4).min(4) as f32 * 104.0)
                 }
             }
-            PanelKind::Tray => {
-                let n = (tray::visible_icons().len() + self.hidden_status().len()).max(1);
-                let cols = n.clamp(4, 6);
-                (cols as f32 * 52.0, 64.0 + ((n + cols - 1) / cols) as f32 * 52.0 + 24.0)
-            }
+            PanelKind::Tray => (300.0, self.tray_panel_height()),
             PanelKind::Calendar => self.clock_cal.as_ref().map(|c| c.panel_size(&self.sh)).unwrap_or((320.0, 360.0)),
         };
         (w + 32.0, h + 32.0)
@@ -2752,142 +2808,206 @@ impl App {
         }
     }
 
-    /// Rede, volume e bateria que estão fora da barra (ficam no painel da bandeja).
-    fn hidden_status(&self) -> Vec<SlotKind> {
-        let g = &self.cfg.general;
-        let mut v = vec![];
-        if !g.show_status {
-            return v;
-        }
-        if !g.show_net {
-            v.push(SlotKind::Net);
-        }
-        if !g.show_vol {
-            v.push(SlotKind::Vol);
-        }
-        if !g.show_bat && self.sh.status.battery.present {
-            v.push(SlotKind::Bat);
-        }
-        v
+    /// Altura do painel da bandeja (o mesmo cálculo do desenho em `tray_panel`).
+    fn tray_panel_height(&self) -> f32 {
+        let n = tray::visible_icons().len();
+        let grid = if n == 0 { 22.0 } else { ((n + 5) / 6) as f32 * 46.0 };
+        let bat = if self.sh.status.battery.present { 13.0 + 42.0 } else { 0.0 };
+        24.0 + 10.0 + grid + (13.0 + 42.0) + (13.0 + 24.0 + 30.0) + bat
     }
 
-    fn tray_panel(&mut self, ui: &mut Ui) {
-        let r = ui.row(24.0);
-        ui.c.text("Ícones da bandeja", r, 13.5 * ui.s, W_SEMIBOLD, TXT, Align::Left);
-        let r2 = ui.row(18.0);
-        ui.c.text("Clique para abrir · alfinete (canto do ícone) para fixar na dock", r2, 11.0 * ui.s, W_NORMAL, TXT2, Align::Left);
-        ui.gap(6.0);
-        let icons_now = tray::visible_icons();
-        // rede, volume e bateria tirados da barra aparecem aqui primeiro
-        let sys = self.hidden_status();
-        let ns = sys.len();
-        let n = icons_now.len() + ns;
-        if n == 0 {
-            ui.note("Nenhum ícone de app agora.");
-            return;
+    /// Alfinete de um item de status (rede, volume, bateria): põe ou tira da barra.
+    fn status_pin(&mut self, ui: &mut Ui, idv: u64, r: Rect, kind: SlotKind) -> bool {
+        let on = match kind {
+            SlotKind::Net => self.cfg.general.show_net,
+            SlotKind::Vol => self.cfg.general.show_vol,
+            _ => self.cfg.general.show_bat,
+        };
+        let (ph, pc) = ui.hit(idv, r);
+        if ph {
+            ui.c.fill_circle(r.cx(), r.cy(), r.w / 2.0, FILL_HOVER);
         }
-        let cols = n.clamp(4, 6);
-        let cw = ui.area.w / cols as f32;
-        let chh = 52.0 * ui.s;
-        let y0 = ui.y;
-        let mut pin_toggle: Option<(String, bool)> = None;
-        let mut sys_pin: Option<SlotKind> = None;
-        for (k, kind) in sys.iter().enumerate() {
-            let cell = Rect::new(ui.area.x + cw * (k % cols) as f32, y0 + chh * (k / cols) as f32, cw, chh);
-            let (hov, clk) = ui.hit(idn("ts", k as u64), cell);
-            if hov {
-                ui.c.fill_rrect(cell.inset(2.0), 8.0 * ui.s, FILL_HOVER);
-            }
-            let (gl, tip) = dock::status_glyph_tip(&self.sh.status, *kind);
-            ui.c.glyph(gl, cell.centered(26.0 * ui.s, 26.0 * ui.s), 17.0 * ui.s, TXT);
-            // alfinete: devolve o item para a barra
-            let pr = Rect::new(cell.r() - 22.0 * ui.s, cell.y + 1.0 * ui.s, 20.0 * ui.s, 20.0 * ui.s);
-            let mut on_pin = false;
-            if hov {
-                let (ph, pc) = ui.hit(idn("tsp", k as u64), pr);
-                on_pin = ph;
-                if ph {
-                    ui.c.fill_circle(pr.cx(), pr.cy(), 10.0 * ui.s, FILL_HOVER);
-                }
-                ui.c.glyph(0xE718, pr, 11.0 * ui.s, if ph { TXT } else { TXT2 });
-                if pc {
-                    sys_pin = Some(*kind);
-                    continue;
-                }
-                let tr = Rect::new(ui.area.x, ui.area.b() - 20.0 * ui.s, ui.area.w, 20.0 * ui.s);
-                ui.c.text(&tip, tr, 11.0 * ui.s, W_NORMAL, TXT2, Align::Center);
-                if *kind == SlotKind::Vol && ui.inp.wheel != 0.0 {
-                    self.sh.status.change_volume(ui.inp.wheel * 0.02);
-                    ui.changed = true;
-                }
-            }
-            if clk && !on_pin {
-                taskbar::open_quick_settings();
-                self.sh.close_panel = true;
-            }
-            if *kind == SlotKind::Vol && ui.right_clicked(cell) {
-                self.sh.status.toggle_mute();
-                ui.changed = true;
-            }
-        }
-        if let Some(kind) = sys_pin {
+        ui.c.glyph(if on { 0xE841 } else { 0xE718 }, r, 11.0 * ui.s, if on { ACCENT } else if ph { TXT } else { TXT2 });
+        if pc {
+            let g = &mut self.cfg.general;
             match kind {
-                SlotKind::Net => self.cfg.general.show_net = true,
-                SlotKind::Vol => self.cfg.general.show_vol = true,
-                _ => self.cfg.general.show_bat = true,
+                SlotKind::Net => g.show_net = !on,
+                SlotKind::Vol => g.show_vol = !on,
+                _ => g.show_bat = !on,
             }
             self.mark_save();
             self.rebuild_all();
         }
-        for (k0, ic) in icons_now.iter().enumerate() {
-            let k = k0 + ns;
-            let cell = Rect::new(ui.area.x + cw * (k % cols) as f32, y0 + chh * (k / cols) as f32, cw, chh);
-            let (hov, clk) = ui.hit(idn("ti", k as u64), cell);
-            let pinned = self.cfg.tray_pinned.iter().any(|p| p == &ic.key || {
-                let exe = ic.key.split('|').next().unwrap_or("");
-                *p == format!("{}|*", exe)
-            });
-            if hov {
-                ui.c.fill_rrect(cell.inset(2.0), 8.0 * ui.s, FILL_HOVER);
-            }
-            let key = format!("tray:{}:{}", ic.key, ic.hicon.0 as usize);
-            let bmp = self.sh.icons.get_hicon_cached(&key).or_else(|| self.sh.icons.put_hicon(&key, ic.hicon));
-            if let Some(b) = bmp {
-                ui.c.bitmap(&b.bmp, cell.centered(24.0 * ui.s, 24.0 * ui.s), 1.0);
-            }
-            // alfinete: grande o bastante para acertar, e visível ao passar o mouse
-            let pr = Rect::new(cell.r() - 22.0 * ui.s, cell.y + 1.0 * ui.s, 20.0 * ui.s, 20.0 * ui.s);
-            let mut on_pin = false;
-            if hov || pinned {
-                let (ph, pc) = ui.hit(idn("tp", k as u64), pr);
-                on_pin = ph;
-                if ph {
-                    ui.c.fill_circle(pr.cx(), pr.cy(), 10.0 * ui.s, FILL_HOVER);
+        ph
+    }
+
+    fn tray_panel(&mut self, ui: &mut Ui) {
+        let s = ui.s;
+        let head = ui.row(24.0);
+        ui.c.text("Bandeja", head, 14.0 * s, W_SEMIBOLD, TXT, Align::Left);
+        let gear = Rect::new(head.r() - 24.0 * s, head.y, 24.0 * s, 24.0 * s);
+        if ui.icon_btn(id("tq"), gear, 0xE713, 12.0, TXT2) {
+            taskbar::open_quick_settings();
+            self.sh.close_panel = true;
+        }
+        let hint_r = Rect::new(head.x + 70.0 * s, head.y, head.w - 70.0 * s - 30.0 * s, head.h);
+        let mut hint = "clique e menu de cada app".to_string();
+        ui.gap(10.0);
+
+        // ícones dos apps: blocos arredondados, alfinete no canto para fixar na dock
+        let icons_now = tray::visible_icons();
+        if icons_now.is_empty() {
+            let r = ui.row(22.0);
+            ui.c.text("Nenhum ícone de app agora", r, 11.5 * s, W_NORMAL, TXT3, Align::Left);
+        } else {
+            let cols = 6;
+            let cw = ui.area.w / cols as f32;
+            let chh = 46.0 * s;
+            let y0 = ui.y;
+            let rows = (icons_now.len() + cols - 1) / cols;
+            ui.gap(46.0 * rows as f32);
+            let mut pin_toggle: Option<(String, bool)> = None;
+            for (k, ic) in icons_now.iter().enumerate() {
+                let cell = Rect::new(ui.area.x + cw * (k % cols) as f32, y0 + chh * (k / cols) as f32, cw, chh);
+                let tile = Rect::new(cell.cx() - 20.0 * s, cell.y + 1.0 * s, 40.0 * s, 40.0 * s);
+                let (hov, clk) = ui.hit(idn("ti", k as u64), tile);
+                let pinned = self.cfg.tray_pinned.iter().any(|p| p == &ic.key || {
+                    let exe = ic.key.split('|').next().unwrap_or("");
+                    *p == format!("{}|*", exe)
+                });
+                ui.c.fill_rrect(tile, 10.0 * s, if hov { FILL_HOVER } else { FILL });
+                let key = format!("tray:{}:{}", ic.key, ic.hicon.0 as usize);
+                let bmp = self.sh.icons.get_hicon_cached(&key).or_else(|| self.sh.icons.put_hicon(&key, ic.hicon));
+                if let Some(b) = bmp {
+                    ui.c.bitmap(&b.bmp, tile.centered(22.0 * s, 22.0 * s), 1.0);
                 }
-                ui.c.glyph(if pinned { 0xE841 } else { 0xE718 }, pr, 11.0 * ui.s, if pinned { ACCENT } else if ph { TXT } else { TXT2 });
-                if pc {
-                    pin_toggle = Some((ic.key.clone(), !pinned));
-                    continue;
+                let pr = Rect::new(tile.r() - 11.0 * s, tile.y - 5.0 * s, 16.0 * s, 16.0 * s);
+                let mut on_pin = false;
+                if hov || pinned {
+                    let (ph, pc) = ui.hit(idn("tp", k as u64), pr);
+                    on_pin = ph;
+                    ui.c.fill_circle(pr.cx(), pr.cy(), 8.0 * s, if pinned { ACCENT } else if ph { Color(0.35, 0.35, 0.4, 1.0) } else { Color(0.22, 0.22, 0.26, 1.0) });
+                    ui.c.glyph(if pinned { 0xE841 } else { 0xE718 }, pr, 8.5 * s, WHITE);
+                    if pc {
+                        pin_toggle = Some((ic.key.clone(), !pinned));
+                        continue;
+                    }
+                    if ph {
+                        hint = if pinned { "tirar da dock".into() } else { "fixar na dock".into() };
+                    }
+                }
+                if hov && !on_pin && !ic.tip.is_empty() {
+                    hint = ic.tip.lines().next().unwrap_or("").to_string();
+                }
+                // clique e botão direito vão para o próprio app, e o painel fecha
+                if clk && !on_pin {
+                    let rp = self.panel.as_ref().map(|p| p.p.rect).unwrap_or(RECT::default());
+                    tray::click(&ic.key, tray::Click::Left, rp.left + tile.cx() as i32, rp.top + tile.cy() as i32);
+                    self.sh.close_panel = true;
+                }
+                if ui.right_clicked(tile) {
+                    let rp = self.panel.as_ref().map(|p| p.p.rect).unwrap_or(RECT::default());
+                    tray::click(&ic.key, tray::Click::Right, rp.left + tile.cx() as i32, rp.top + tile.cy() as i32);
+                    self.sh.close_panel = true;
                 }
             }
-            // clicar num ícone abre o app e fecha o painel
-            if clk && !on_pin {
-                let rp = self.panel.as_ref().map(|p| p.p.rect).unwrap_or(RECT::default());
-                tray::click(&ic.key, tray::Click::Left, rp.left + cell.cx() as i32, rp.top + cell.cy() as i32);
-                self.sh.close_panel = true;
-            }
-            if ui.right_clicked(cell) {
-                let rp = self.panel.as_ref().map(|p| p.p.rect).unwrap_or(RECT::default());
-                tray::click(&ic.key, tray::Click::Right, rp.left + cell.cx() as i32, rp.top + cell.cy() as i32);
-                self.sh.close_panel = true;
-            }
-            if hov && !ic.tip.is_empty() {
-                let tr = Rect::new(ui.area.x, ui.area.b() - 20.0 * ui.s, ui.area.w, 20.0 * ui.s);
-                ui.c.text(ic.tip.lines().next().unwrap_or(""), tr, 11.0 * ui.s, W_NORMAL, TXT2, Align::Center);
+            if let Some((k, on)) = pin_toggle {
+                self.set_tray_pin(&k, on);
             }
         }
-        if let Some((k, on)) = pin_toggle {
-            self.set_tray_pin(&k, on);
+        ui.c.text(&hint, hint_r, 11.0 * s, W_NORMAL, TXT3, Align::Right);
+
+        // rede
+        ui.separator();
+        let r = ui.row(42.0);
+        let st = &self.sh.status;
+        let (title, sub) = match st.net {
+            Net::Wifi(_) => ("Wi-Fi".to_string(), if st.ssid.is_empty() { "Conectado".to_string() } else { format!("{} · conectado", st.ssid) }),
+            Net::Ethernet => ("Rede cabeada".to_string(), "Conectado".to_string()),
+            Net::None => ("Rede".to_string(), "Sem internet".to_string()),
+        };
+        let net_glyph = st.net_glyph();
+        let (hov, clk) = ui.hit(id("tnet"), r);
+        if hov {
+            ui.c.fill_rrect(Rect::new(r.x - 8.0 * s, r.y, r.w + 16.0 * s, r.h), 8.0 * s, FILL);
+        }
+        ui.c.text(&title, Rect::new(r.x, r.y + 2.0 * s, r.w - 70.0 * s, 20.0 * s), 13.0 * s, W_SEMIBOLD, TXT, Align::Left);
+        ui.c.text(&sub, Rect::new(r.x, r.y + 21.0 * s, r.w - 70.0 * s, 18.0 * s), 11.5 * s, W_NORMAL, TXT2, Align::Left);
+        ui.c.glyph(net_glyph, Rect::new(r.r() - 26.0 * s, r.y, 26.0 * s, r.h), 17.0 * s, TXT);
+        let mut on_pin = false;
+        if hov {
+            on_pin = self.status_pin(ui, id("tnetp"), Rect::new(r.r() - 54.0 * s, r.cy() - 10.0 * s, 20.0 * s, 20.0 * s), SlotKind::Net);
+        }
+        if clk && !on_pin {
+            // lista de redes do próprio Windows
+            shell_open("ms-availablenetworks:");
+            self.sh.close_panel = true;
+        }
+
+        // volume
+        ui.separator();
+        let r = ui.row(24.0);
+        ui.c.text("Volume", Rect::new(r.x, r.y, r.w * 0.5, r.h), 13.0 * s, W_SEMIBOLD, TXT, Align::Left);
+        let (vol, muted, vg) = (self.sh.status.vol, self.sh.status.muted, self.sh.status.vol_glyph());
+        let mb = Rect::new(r.r() - 24.0 * s, r.y, 24.0 * s, 24.0 * s);
+        if ui.icon_btn(id("tmute"), mb, vg, 13.0, if muted { TXT3 } else { TXT }) {
+            self.sh.status.toggle_mute();
+        }
+        let pct = if muted { "Sem som".to_string() } else { format!("{:.0}%", vol * 100.0) };
+        ui.c.text(&pct, Rect::new(mb.x - 80.0 * s, r.y, 76.0 * s, r.h), 11.5 * s, W_NORMAL, TXT2, Align::Right);
+        let (vh, _) = ui.hit(id("tvolrow"), r);
+        if vh {
+            self.status_pin(ui, id("tvolp"), Rect::new(r.x + 60.0 * s, r.cy() - 10.0 * s, 20.0 * s, 20.0 * s), SlotKind::Vol);
+        }
+        let r = ui.row(30.0);
+        let mut v = vol * 100.0;
+        if ui.slider(id("tvol"), Rect::new(r.x + 8.0 * s, r.y, r.w - 16.0 * s, r.h), &mut v, 0.0, 100.0) {
+            self.sh.status.set_volume(v / 100.0);
+        }
+
+        // bateria
+        if self.sh.status.battery.present {
+            ui.separator();
+            let r = ui.row(42.0);
+            let b = self.sh.status.battery.clone();
+            let sub = if b.charging {
+                format!("{}% · carregando", b.pct)
+            } else if b.ac {
+                format!("{}% · na tomada", b.pct)
+            } else if let Some(secs) = b.secs_left {
+                let (h, m) = (secs / 3600, (secs % 3600) / 60);
+                if h > 0 {
+                    format!("{}% · {} h {} min restantes", b.pct, h, m)
+                } else {
+                    format!("{}% · {} min restantes", b.pct, m)
+                }
+            } else {
+                format!("{}%", b.pct)
+            };
+            let (hov, clk) = ui.hit(id("tbat"), r);
+            if hov {
+                ui.c.fill_rrect(Rect::new(r.x - 8.0 * s, r.y, r.w + 16.0 * s, r.h), 8.0 * s, FILL);
+            }
+            ui.c.text(if b.saver { "Bateria · economia" } else { "Bateria" }, Rect::new(r.x, r.y + 2.0 * s, r.w - 70.0 * s, 20.0 * s), 13.0 * s, W_SEMIBOLD, TXT, Align::Left);
+            ui.c.text(&sub, Rect::new(r.x, r.y + 21.0 * s, r.w - 70.0 * s, 18.0 * s), 11.5 * s, W_NORMAL, TXT2, Align::Left);
+            // pilha desenhada: verde, amarela na economia, vermelha quando baixa
+            let body = Rect::new(r.r() - 34.0 * s, r.cy() - 7.0 * s, 30.0 * s, 14.0 * s);
+            ui.c.stroke_rrect(body, 3.5 * s, TXT2, 1.2 * s);
+            ui.c.fill_rrect(Rect::new(body.r() + 1.5 * s, body.cy() - 3.0 * s, 2.5 * s, 6.0 * s), 1.0 * s, TXT2);
+            let col = if b.charging || b.pct > 20 { if b.saver { Color::hex(0xFFD60A) } else { Color::hex(0x30D158) } } else { Color::hex(0xFF453A) };
+            let inner = body.inset(2.5 * s);
+            ui.c.fill_rrect(Rect::new(inner.x, inner.y, (inner.w * b.pct.min(100) as f32 / 100.0).max(2.0 * s), inner.h), 2.0 * s, col);
+            if b.charging {
+                ui.c.glyph(0xE945, body, 9.0 * s, WHITE);
+            }
+            let mut on_pin = false;
+            if hov {
+                on_pin = self.status_pin(ui, id("tbatp"), Rect::new(r.r() - 62.0 * s, r.cy() - 10.0 * s, 20.0 * s, 20.0 * s), SlotKind::Bat);
+            }
+            if clk && !on_pin {
+                shell_open("ms-settings:batterysaver");
+                self.sh.close_panel = true;
+            }
         }
     }
 

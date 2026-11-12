@@ -59,7 +59,7 @@ const NIF_STATE: u32 = 8;
 const NIF_GUID: u32 = 0x20;
 const NIS_HIDDEN: u32 = 1;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TrayIcon {
     pub hwnd: HWND,
     pub uid: u32,
@@ -82,6 +82,11 @@ pub struct TrayStore {
     pub explorer: HWND,
     pub own: HWND,
     serial: u64,
+    /// selos (overlay) que os apps põem no botão da barra: janela -> (cópia do ícone, série)
+    pub overlays: HashMap<isize, (isize, u64)>,
+    /// nossa janela que recebe as chamadas do ITaskbarList e a original do Explorer
+    band: HWND,
+    real_band: HWND,
 }
 
 thread_local! {
@@ -147,6 +152,26 @@ pub fn start(explorer: HWND) {
             None,
         );
         let _ = SetWindowPos(h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        // ITaskbarList (selos de notificação, progresso…) procura esta propriedade
+        // na Shell_TrayWnd: apontamos para uma janela nossa, que repassa ao Explorer
+        let bcls = w!("GlassDockTaskband");
+        let wc2 = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(band_proc),
+            hInstance: hinst,
+            lpszClassName: bcls,
+            ..Default::default()
+        };
+        RegisterClassExW(&wc2);
+        let band = CreateWindowExW(WS_EX_TOOLWINDOW, bcls, w!(""), WS_POPUP, 0, 0, 0, 0, None, None, Some(hinst), None).unwrap_or_default();
+        let real = HWND(GetPropW(explorer, w!("TaskbandHWND")).0);
+        with(|t| {
+            t.band = band;
+            t.real_band = real;
+        });
+        if !band.0.is_null() {
+            let _ = SetPropW(h, w!("TaskbandHWND"), Some(HANDLE(band.0)));
+        }
         rebroadcast();
     }
 }
@@ -176,14 +201,83 @@ pub fn ensure_first() -> bool {
 }
 
 pub fn set_explorer(h: HWND) {
-    with(|t| t.explorer = h);
+    let real = unsafe { HWND(GetPropW(h, w!("TaskbandHWND")).0) };
+    with(|t| {
+        t.explorer = h;
+        t.real_band = real;
+    });
+}
+
+/// Selo (overlay) de uma janela, se o app pôs um: (ícone, série para o cache).
+pub fn overlay_of(hwnd: HWND) -> Option<(HICON, u64)> {
+    with(|t| t.overlays.get(&(hwnd.0 as isize)).map(|(i, s)| (HICON(*i as _), *s)))
+}
+
+/// Esquece os selos de janelas que fecharam.
+pub fn prune_overlays() {
+    let dead: Vec<isize> = with(|t| t.overlays.iter().filter(|(h, _)| unsafe { !IsWindow(Some(HWND(**h as _))).as_bool() }).map(|(h, (i, _))| {
+        unsafe {
+            let _ = DestroyIcon(HICON(*i as _));
+        }
+        *h
+    }).collect());
+    if !dead.is_empty() {
+        with(|t| {
+            for h in dead {
+                t.overlays.remove(&h);
+            }
+        });
+    }
+}
+
+/// Recebe as mensagens do ITaskbarList dos apps. 67 = SetOverlayIcon (wParam
+/// janela, lParam ícone). Tudo é repassado à barra do Explorer, que continua
+/// sabendo de tudo (e mostra certo se o GlassDock fechar).
+unsafe extern "system" fn band_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_USER + 67 {
+        let target = wp.0 as isize;
+        let copy = if lp.0 != 0 { CopyIcon(HICON(lp.0 as _)).map(|i| i.0 as isize).unwrap_or(0) } else { 0 };
+        let old = with(|t| {
+            t.serial += 1;
+            let ser = t.serial;
+            if copy != 0 {
+                t.overlays.insert(target, (copy, ser)).map(|x| x.0)
+            } else {
+                t.overlays.remove(&target).map(|x| x.0)
+            }
+        });
+        if let Some(o) = old {
+            let _ = DestroyIcon(HICON(o as _));
+        }
+        crate::app::post(crate::app::WM_APP_OVERLAY, 0, 0);
+    }
+    if msg >= WM_USER {
+        let real = with(|t| t.real_band);
+        if !real.0.is_null() && IsWindow(Some(real)).as_bool() {
+            if InSendMessage().as_bool() {
+                let mut res: usize = 0;
+                let _ = SendMessageTimeoutW(real, msg, wp, lp, SMTO_ABORTIFHUNG, 1000, Some(&mut res));
+                return LRESULT(res as isize);
+            }
+            let _ = PostMessageW(Some(real), msg, wp, lp);
+        }
+        return LRESULT(0);
+    }
+    DefWindowProcW(h, msg, wp, lp)
 }
 
 pub fn stop() {
     let own = with(|t| std::mem::take(&mut t.own));
     if !own.0.is_null() {
         unsafe {
+            let _ = RemovePropW(own, w!("TaskbandHWND"));
             let _ = DestroyWindow(own);
+        }
+    }
+    let band = with(|t| std::mem::take(&mut t.band));
+    if !band.0.is_null() {
+        unsafe {
+            let _ = DestroyWindow(band);
         }
     }
     with(|t| {

@@ -22,6 +22,7 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Os itens das pontas acompanham a curva da barra
 - Apps fixados e abertos juntos, com ordem livre: arraste qualquer app (aberto ou fechado) para qualquer lugar do grupo; a ordem fica salva. Dá para voltar ao modo separado em Ajustes › Geral.
 - Indicador de aberto (ponto ou traço)
+- Bolinha de notificação com a quantidade: vem do título da janela (WhatsApp, Telegram, Gmail, Teams…) ou, quando o app não põe número no título, do selo que ele mostra na barra do Windows (Discord, Teams, WhatsApp…)
 - Animação de abertura: pulo, pulso ou tremor
 - Clique: abre o app; se já está na frente, minimiza; com várias janelas, alterna entre elas
 - Clique do meio: nova janela
@@ -40,8 +41,9 @@ Não precisa de administrador, de instalação nem de conta. Os ajustes ficam em
 - Ctrl+Alt+D leva o foco para a dock (setas, Enter, Esc)
 
 **Status e bandeja** em linha ou em grade (duas linhas, metade do espaço)
-- Rede, volume (a roda do mouse muda o volume) e bateria; um clique abre as Configurações rápidas. A seta, a rede, o volume e a bateria podem ser tirados um a um em Ajustes › Barra e bandeja (menos itens, menos largura); os que saem da barra ficam no painel de ícones ocultos, e o alfinete deles os devolve para a barra.
-- Ícones da bandeja dos outros apps (Discord, Lightshot…): fixe os que quiser pelo alfinete no canto do ícone; o resto fica na setinha (ou em botão direito na barra › Ícones da bandeja…, se a seta estiver escondida). O clique e o botão direito vão para o próprio app e fecham o painel.
+- Rede, volume (a roda do mouse muda o volume) e bateria; um clique abre o painel da bandeja. A seta, a rede, o volume e a bateria podem ser tirados um a um em Ajustes › Barra e bandeja (menos itens, menos largura); eles continuam no painel da bandeja.
+- Painel da bandeja (setinha, ícones de status ou botão direito na barra › Ícones da bandeja…): os ícones dos apps em blocos, Wi-Fi com o nome da rede (clique abre a lista de redes), volume com controle deslizante e botão de mudo, e bateria com o tempo restante. A engrenagem abre as Configurações rápidas do Windows.
+- Ícones da bandeja dos outros apps (Discord, Lightshot…): fixe os que quiser na dock pelo alfinete no canto do ícone. O clique e o botão direito vão para o próprio app e fecham o painel. Rede, volume e bateria também têm alfinete para ficar ou sair da barra.
 - Apps fixados que abrem por um atualizador (Figma, Discord, Slack…) ou mudam de pasta ao atualizar são reconhecidos: o app aprende a janela na primeira abertura pela dock.
 - Relógio com data no formato regional; o clique abre o calendário
 

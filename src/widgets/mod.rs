@@ -132,6 +132,8 @@ pub struct Shared {
     pub rewatch: bool,
     /// agendas ICS compartilhadas por todos os calendários
     pub ics: calendar::IcsStore,
+    /// selos de notificação por janela (hwnd)
+    pub badges: std::collections::HashMap<isize, crate::winlist::Badge>,
 }
 
 impl Shared {

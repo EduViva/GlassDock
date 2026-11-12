@@ -177,7 +177,19 @@ impl Status {
         }
     }
 
-    pub fn toggle_mute(&mut self) {
+    pub fn set_volume(&mut self, v: f32) {
+        if let Some(ep) = &self.endpoint {
+            unsafe {
+                let _ = ep.SetMasterVolumeLevelScalar(v.clamp(0.0, 1.0), std::ptr::null());
+                if self.muted && v > 0.0 {
+                    let _ = ep.SetMute(false, std::ptr::null());
+                }
+            }
+            self.refresh_volume();
+        }
+    }
+
+        pub fn toggle_mute(&mut self) {
         if let Some(ep) = &self.endpoint {
             unsafe {
                 let _ = ep.SetMute(!self.muted, std::ptr::null());

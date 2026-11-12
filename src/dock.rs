@@ -629,8 +629,8 @@ pub fn build(d: &mut Dock, cfg: &Config, wins: &WinList, widgets: &BTreeMap<u32,
             }
         }
         // a setinha dos ícones ocultos (pode ser escondida; o menu da barra a abre)
-        let sys_hidden = !cfg.general.show_net || !cfg.general.show_vol || (!cfg.general.show_bat && sh.status.battery.present);
-        if cfg.general.show_chevron && (!icons_now.is_empty() || sys_hidden) {
+        // o painel da bandeja sempre tem algo (rede, volume, bateria)
+        if cfg.general.show_chevron {
             let mut s = Slot::new(SlotKind::Chevron, 0.4);
             s.mag = false;
             s.small = true;
@@ -1172,6 +1172,7 @@ pub fn render_dirty(d: &mut Dock, ctx: &mut DrawCtx, only_widgets: &[u32]) {
                     let ic = slot_icon(ctx_sh, sl, g.s * cfg.appearance.magnify.max(1.0));
                     c.shadow(r.inset(r.w * 0.08), r.w * 0.2, 5.0 * g.sc, 4.0 * g.sc, Color(0.04, 0.05, 0.12, 0.22));
                     draw_app_icon(c, ic.as_ref(), r, plate, th.dark, &sl.name);
+                    draw_badge(c, ctx_sh, sl, r, g.sc);
                     let ind_col = if cfg.appearance.indicator_ws_color { ws_color } else { th.glyph };
                     if !sl.wins.is_empty() {
                         draw_indicator(c, cfg, &g, d_pos(pos), r, sl, ind_col, &bar);
@@ -1398,6 +1399,37 @@ pub fn status_glyph_tip(st: &crate::status::Status, kind: SlotKind) -> (u32, Str
         ),
         SlotKind::Vol => (st.vol_glyph(), if st.muted { "Sem som".into() } else { format!("Volume {:.0}%", st.vol * 100.0) }),
         _ => (st.battery_glyph(), format!("Bateria {}%{}", st.battery.pct, if st.battery.charging { " · carregando" } else { "" })),
+    }
+}
+
+/// Bolinha de notificação no canto do ícone: a quantidade (do título da
+/// janela) ou, sem número, o selo que o próprio app pôs na barra.
+fn draw_badge(c: &Canvas, sh: &Shared, sl: &Slot, r: Rect, sc: f32) {
+    let mut count = 0u32;
+    let mut overlay: Option<&String> = None;
+    for h in &sl.wins {
+        if let Some(b) = sh.badges.get(&(h.0 as isize)) {
+            count = count.max(b.count);
+            if overlay.is_none() {
+                overlay = b.overlay.as_ref();
+            }
+        }
+    }
+    let d = (r.w * 0.36).max(14.0 * sc);
+    if count > 0 {
+        let txt = if count > 99 { "99+".to_string() } else { count.to_string() };
+        let w = if txt.len() == 1 { d } else { d * (0.42 + 0.3 * txt.len() as f32) };
+        let br = Rect::new(r.r() - w * 0.72, r.y - d * 0.22, w, d);
+        c.shadow(br, d / 2.0, 3.0 * sc, 1.5 * sc, Color(0.0, 0.0, 0.0, 0.3));
+        c.fill_rrect(br, d / 2.0, Color::hex(0xFF3B30));
+        c.stroke_rrect(br.inset(0.5), d / 2.0, Color(1.0, 1.0, 1.0, 0.25), 1.0);
+        c.text(&txt, br, d * 0.62, W_SEMIBOLD, WHITE, Align::Center);
+    } else if let Some(k) = overlay {
+        if let Some(ic) = sh.icons.get_hicon_cached(k) {
+            let br = Rect::new(r.r() - d * 0.72, r.y - d * 0.22, d, d);
+            c.shadow(br, d / 2.0, 3.0 * sc, 1.5 * sc, Color(0.0, 0.0, 0.0, 0.3));
+            c.bitmap(&ic.bmp, br, 1.0);
+        }
     }
 }
 

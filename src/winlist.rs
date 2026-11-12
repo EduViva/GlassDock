@@ -504,3 +504,43 @@ pub fn launch(app: &PinnedApp, new_window_hint: bool) {
 
 /// Apps que o Windows não conseguiu abrir (a thread principal mostra o aviso).
 pub static LAUNCH_FAILS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Selo de notificação de uma janela: contagem (do título) e/ou o ícone de
+/// sobreposição que o app pôs no botão da barra (Discord, Teams, WhatsApp…).
+#[derive(Clone, PartialEq, Default, Debug)]
+pub struct Badge {
+    pub count: u32,
+    pub overlay: Option<String>,
+}
+
+/// Contagem de não lidas no título: "(3) WhatsApp", "[2] Chat", "Telegram (5)".
+pub fn parse_title_count(t: &str) -> u32 {
+    let t = t.trim();
+    let num = |s: &str| -> u32 {
+        let s = s.trim().trim_end_matches('+');
+        if s.is_empty() || s.len() > 4 || !s.chars().all(|c| c.is_ascii_digit()) {
+            return 0;
+        }
+        s.parse().unwrap_or(0)
+    };
+    for (o, c) in [('(', ')'), ('[', ']')] {
+        if let Some(rest) = t.strip_prefix(o) {
+            if let Some(end) = rest.find(c) {
+                let n = num(&rest[..end]);
+                if n > 0 {
+                    return n;
+                }
+            }
+        }
+    }
+    // no fim só para títulos curtos ("Telegram (5)"), para não pegar "arquivo (2)"
+    if t.ends_with(')') && t.chars().count() <= 32 {
+        if let Some(st) = t.rfind('(') {
+            let n = num(&t[st + 1..t.len() - 1]);
+            if n > 0 && st > 0 {
+                return n;
+            }
+        }
+    }
+    0
+}
